@@ -1,0 +1,47 @@
+{
+    "folders": [
+        {
+            "name": "POWER FLUX (Root)",
+            "path": "."
+        },
+        {
+            "name": "Embedded (M5Stack)",
+            "path": "embedded"
+        },
+        {
+            "name": "Mobile App",
+            "path": "mobile-app"
+        },
+        {
+            "name": "Web App",
+            "path": "web-app"
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.h": "cpp",
+            "*.cpp": "cpp",
+            "*.ino": "cpp"
+        },
+        "terminal.integrated.cwd": "${workspaceFolder}",
+        "C_Cpp.intelliSenseEngine": "default",
+        "[cpp]": {
+            "editor.defaultFormatter": "ms-vscode.cpptools",
+            "editor.formatOnSave": true
+        },
+        "files.exclude": {
+            "**/.pio/build/": true,
+            "**/.vscode/.browse.c_cpp.db*": true,
+            "**/.vscode/c_cpp_properties.json": true,
+            "**/.vscode/launch.json": true,
+            "**/.vscode/ipch": true
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "platformio.platformio-ide",
+            "ms-vscode.cpptools",
+            "eamodio.gitlens"
+        ]
+    }
+}
