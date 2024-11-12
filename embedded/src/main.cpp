@@ -1,14 +1,45 @@
 #include <M5StickCPlus2.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 
-// Global variables for storing sensor data
-float accX = 0.0F;
-float accY = 0.0F;
-float accZ = 0.0F;
-float gyroX = 0.0F;
-float gyroY = 0.0F;
-float gyroZ = 0.0F;
+// BLE server name and UUIDs stored in flash memory
+static const char DEVICE_NAME[] PROGMEM = "PowerFlux";
+static const char SERVICE_UUID[] PROGMEM = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+static const char CHARACTERISTIC_UUID[] PROGMEM = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-float calculateAccMagnitude(float x, float y, float z)
+BLEServer *pServer = nullptr;
+BLECharacteristic *pCharacteristic = nullptr;
+bool deviceConnected = false;
+
+// Sensor data structure to organize variables
+struct SensorData
+{
+  float accX = 0.0F, accY = 0.0F, accZ = 0.0F;
+  float gyroX = 0.0F, gyroY = 0.0F, gyroZ = 0.0F;
+} sensorData;
+
+const int UPDATE_FREQ = 100;
+const float DT = 1.0F / UPDATE_FREQ;
+
+class MyServerCallbacks : public BLEServerCallbacks
+{
+  void onConnect(BLEServer *pServer) override
+  {
+    deviceConnected = true;
+    M5.Lcd.println("Connected!");
+  }
+
+  void onDisconnect(BLEServer *pServer) override
+  {
+    deviceConnected = false;
+    M5.Lcd.println("Disconnected!");
+    pServer->getAdvertising()->start();
+  }
+};
+
+inline float calculateAccMagnitude(float x, float y, float z)
 {
   return sqrt(x * x + y * y + z * z);
 }
@@ -16,7 +47,6 @@ float calculateAccMagnitude(float x, float y, float z)
 void setup()
 {
   M5.begin();
-  // Initialize IMU
   M5.Imu.begin();
 
   // Setup display
@@ -25,6 +55,25 @@ void setup()
   M5.Lcd.setTextSize(2);
   M5.Lcd.setCursor(0, 0);
   M5.Lcd.println("Power Flux!");
+
+  // Initialize BLE
+  BLEDevice::init(DEVICE_NAME);
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create BLE Service and Characteristic
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristic = pService->createCharacteristic(
+      CHARACTERISTIC_UUID,
+      BLECharacteristic::PROPERTY_READ |
+          BLECharacteristic::PROPERTY_NOTIFY);
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  pService->start();
+  pServer->getAdvertising()->start();
+  M5.Lcd.println("BLE ready!");
+  M5.Lcd.println("Name: PowerFlux");
+  M5.Lcd.printf("Service: %s\n", SERVICE_UUID);
 }
 
 void loop()
@@ -32,28 +81,31 @@ void loop()
   M5.update();
 
   // Read IMU data
-  M5.Imu.getAccelData(&accX, &accY, &accZ);
-  M5.Imu.getGyroData(&gyroX, &gyroY, &gyroZ);
+  M5.Imu.getAccelData(&sensorData.accX, &sensorData.accY, &sensorData.accZ);
+  M5.Imu.getGyroData(&sensorData.gyroX, &sensorData.gyroY, &sensorData.gyroZ);
 
-  // Calculate acceleration magnitude
-  float accMagnitude = calculateAccMagnitude(accX, accY, accZ);
+  float accMagnitude = calculateAccMagnitude(
+      sensorData.accX, sensorData.accY, sensorData.accZ);
 
-  // Clear previous text
+  if (deviceConnected)
+  {
+    static char buffer[128];
+    snprintf(buffer, sizeof(buffer),
+             "{\"ax\":%.2f,\"ay\":%.2f,\"az\":%.2f,"
+             "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
+             "\"mag\":%.2f}",
+             sensorData.accX, sensorData.accY, sensorData.accZ,
+             sensorData.gyroX, sensorData.gyroY, sensorData.gyroZ,
+             accMagnitude);
+    pCharacteristic->setValue(buffer);
+    pCharacteristic->notify();
+  }
+
+  // Update display
   M5.Lcd.fillScreen(BLACK);
   M5.Lcd.setCursor(0, 0);
+  M5.Lcd.printf("Acc:%5.2f\n", accMagnitude);
+  M5.Lcd.printf("BLE:%s\n", deviceConnected ? "OK" : "...");
 
-  // Display IMU data
-  M5.Lcd.printf("AccX: %5.2f\n", accX);
-  M5.Lcd.printf("AccY: %5.2f\n", accY);
-  M5.Lcd.printf("AccZ: %5.2f\n", accZ);
-  M5.Lcd.printf("Mag : %5.2f\n", accMagnitude);
-
-  // Update every 100ms
-  delay(100);
-}
-
-// put function definitions here:
-int myFunction(int x, int y)
-{
-  return x + y;
+  delay(10); // 100Hz update rate
 }
