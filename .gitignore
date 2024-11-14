@@ -35,5 +35,6 @@ ENV/
 # Project specific
 docs/context
 testing/
+*.txt
 
 
