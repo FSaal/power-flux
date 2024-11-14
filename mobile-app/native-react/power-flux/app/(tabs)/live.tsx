@@ -1,5 +1,3 @@
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
@@ -10,18 +8,16 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { BleManager, Device } from 'react-native-ble-plx';
-import { dbService } from '../../services/database';
+import { BleManager, State as BleState, Device } from 'react-native-ble-plx';
 
 // BLE Configuration
 const BLE_CONFIG = {
     DEVICE_NAME: 'M5Debug',
     SERVICE_UUID: '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
     CHARACTERISTIC_UUID: 'beb5483e-36e1-4688-b7f5-ea07361b26a8',
+    SCAN_TIMEOUT: 10000, // 10 seconds
+    RECONNECT_DELAY: 1000, // 1 second
 } as const;
-
-const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-const [isRecording, setIsRecording] = useState(false);
 
 interface SensorData {
     magnitude: number;
@@ -29,7 +25,6 @@ interface SensorData {
 }
 
 const MinimalLiveScreen: React.FC = () => {
-    // Create BLE manager as a ref to persist between renders
     const [bleManager] = useState(() => new BleManager());
     const [isConnected, setIsConnected] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
@@ -37,13 +32,30 @@ const MinimalLiveScreen: React.FC = () => {
         magnitude: 0,
         timestamp: 0,
     });
+    const [device, setDevice] = useState<Device | null>(null);
 
     // Cleanup BLE manager on component unmount
     useEffect(() => {
         return () => {
+            console.log('Destroying BLE manager');
+            if (device) {
+                device.cancelConnection();
+            }
             bleManager.destroy();
         };
-    }, [bleManager]);
+    }, [bleManager, device]);
+
+    // Auto-reconnection logic
+    useEffect(() => {
+        const reconnectionInterval = setInterval(() => {
+            if (!isConnected && !isScanning) {
+                console.log('Attempting to reconnect...');
+                startScan();
+            }
+        }, BLE_CONFIG.RECONNECT_DELAY);
+
+        return () => clearInterval(reconnectionInterval);
+    }, [isConnected, isScanning]);
 
     const requestPermissions = async (): Promise<boolean> => {
         if (Platform.OS === 'android' && Platform.Version >= 23) {
@@ -66,7 +78,14 @@ const MinimalLiveScreen: React.FC = () => {
                     )
                 );
 
-                return results.every(result => result === 'granted');
+                const granted = results.every(result => result === 'granted');
+                if (!granted) {
+                    Alert.alert(
+                        'Permissions Required',
+                        'Please grant all required permissions to use BLE features'
+                    );
+                }
+                return granted;
             } catch (err) {
                 console.warn('Permission request error:', err);
                 return false;
@@ -92,19 +111,20 @@ const MinimalLiveScreen: React.FC = () => {
     const connectToDevice = async (device: Device) => {
         try {
             console.log('Connecting to device:', device.name);
-            const connectedDevice = await device.connect();
+            const connectedDevice = await device.connect({ timeout: 5000 });
             console.log('Connected, discovering services...');
 
             const deviceWithServices = await connectedDevice.discoverAllServicesAndCharacteristics();
             console.log('Services discovered');
 
+            setDevice(deviceWithServices);
             setIsConnected(true);
 
             // Subscribe to notifications
             deviceWithServices.monitorCharacteristicForService(
                 BLE_CONFIG.SERVICE_UUID,
                 BLE_CONFIG.CHARACTERISTIC_UUID,
-                async (error, characteristic) => {
+                (error, characteristic) => {
                     if (error) {
                         console.error('Monitoring error:', error);
                         return;
@@ -114,24 +134,25 @@ const MinimalLiveScreen: React.FC = () => {
                         try {
                             const newData = parseSensorData(characteristic.value);
                             setSensorData(newData);
-
-                            if (isRecording && currentSessionId) {
-                                await dbService.storeMeasurement({
-                                    magnitude: newData.magnitude,
-                                    timestamp: newData.timestamp,
-                                    sessionId: currentSessionId
-                                });
-                            }
                         } catch (parseError) {
                             console.error('Error parsing data:', parseError);
                         }
                     }
                 }
             );
+
+            // Setup disconnect listener
+            deviceWithServices.onDisconnected((error, disconnectedDevice) => {
+                console.log('Device disconnected:', disconnectedDevice?.name);
+                setIsConnected(false);
+                setDevice(null);
+            });
+
         } catch (error) {
             console.error('Connection error:', error);
             setIsConnected(false);
-            Alert.alert('Connection Error', 'Failed to connect to device');
+            setDevice(null);
+            Alert.alert('Connection Error', 'Failed to connect to device. Please try again.');
         }
     };
 
@@ -145,7 +166,6 @@ const MinimalLiveScreen: React.FC = () => {
             // Check permissions first
             const permissionsGranted = await requestPermissions();
             if (!permissionsGranted) {
-                Alert.alert('Permission Error', 'Required permissions not granted');
                 return;
             }
 
@@ -153,7 +173,7 @@ const MinimalLiveScreen: React.FC = () => {
             const state = await bleManager.state();
             console.log('Bluetooth state:', state);
 
-            if (state !== 'PoweredOn') {
+            if (state !== BleState.PoweredOn) {
                 Alert.alert('Bluetooth Error', 'Please enable Bluetooth and try again');
                 return;
             }
@@ -164,30 +184,31 @@ const MinimalLiveScreen: React.FC = () => {
             bleManager.startDeviceScan(
                 null,
                 { allowDuplicates: false },
-                async (error, device) => {
+                (error, scannedDevice) => {
                     if (error) {
                         console.error('Scan error:', error);
                         setIsScanning(false);
+                        Alert.alert('Scan Error', `Failed to scan: ${error.message}`);
                         return;
                     }
 
-                    if (device?.name === BLE_CONFIG.DEVICE_NAME) {
-                        console.log('Found device:', device.name);
+                    if (scannedDevice?.name === BLE_CONFIG.DEVICE_NAME) {
+                        console.log('Found device:', scannedDevice.name);
                         bleManager.stopDeviceScan();
                         setIsScanning(false);
-                        await connectToDevice(device);
+                        connectToDevice(scannedDevice);
                     }
                 }
             );
 
-            // Stop scan after 10 seconds
+            // Stop scan after timeout
             setTimeout(() => {
                 if (isScanning) {
                     console.log('Scan timeout, stopping...');
                     bleManager.stopDeviceScan();
                     setIsScanning(false);
                 }
-            }, 10000);
+            }, BLE_CONFIG.SCAN_TIMEOUT);
 
         } catch (error) {
             console.error('Scan error:', error);
@@ -195,71 +216,6 @@ const MinimalLiveScreen: React.FC = () => {
             Alert.alert('Scan Error', 'Failed to start scanning');
         }
     }, [bleManager, isScanning]);
-
-    const startRecording = async () => {
-        try {
-            const sessionId = await dbService.startSession();
-            setCurrentSessionId(sessionId);
-            setIsRecording(true);
-        } catch (error) {
-            console.error('Error starting recording:', error);
-            Alert.alert('Error', 'Failed to start recording');
-        }
-    };
-
-    const stopRecording = async () => {
-        if (currentSessionId) {
-            try {
-                await dbService.endSession(currentSessionId);
-                setIsRecording(false);
-
-                // Offer to export the data
-                Alert.alert(
-                    'Session Completed',
-                    'Would you like to export this session?',
-                    [
-                        {
-                            text: 'Export',
-                            onPress: () => exportSession(currentSessionId!),
-                        },
-                        {
-                            text: 'Close',
-                            style: 'cancel',
-                        },
-                    ]
-                );
-            } catch (error) {
-                console.error('Error stopping recording:', error);
-                Alert.alert('Error', 'Failed to stop recording');
-            }
-        }
-        setCurrentSessionId(null);
-    };
-
-    const exportSession = async (sessionId: string) => {
-        try {
-            // Generate CSV content
-            const csvContent = await dbService.exportSessionToCSV(sessionId);
-
-            // Create a temporary file
-            const fileName = `powerflux_session_${sessionId}.csv`;
-            const filePath = `${FileSystem.documentDirectory}${fileName}`;
-
-            await FileSystem.writeAsStringAsync(filePath, csvContent);
-
-            // Share the file
-            if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(filePath, {
-                    mimeType: 'text/csv',
-                    dialogTitle: 'Export Session Data',
-                    UTI: 'public.comma-separated-values-text'
-                });
-            }
-        } catch (error) {
-            console.error('Error exporting session:', error);
-            Alert.alert('Error', 'Failed to export session data');
-        }
-    };
 
     return (
         <View style={styles.container}>
@@ -282,22 +238,6 @@ const MinimalLiveScreen: React.FC = () => {
                     {isScanning ? 'Scanning...' : isConnected ? 'Reconnect' : 'Scan for Device'}
                 </Text>
             </TouchableOpacity>
-
-            <View style={styles.buttonContainer}>
-                {isConnected && (
-                    <TouchableOpacity
-                        style={[
-                            styles.recordButton,
-                            { backgroundColor: isRecording ? '#EF4444' : '#22C55E' }
-                        ]}
-                        onPress={isRecording ? stopRecording : startRecording}
-                    >
-                        <Text style={styles.buttonText}>
-                            {isRecording ? 'Stop Recording' : 'Start Recording'}
-                        </Text>
-                    </TouchableOpacity>
-                )}
-            </View>
 
             <View style={styles.dataContainer}>
                 <Text style={styles.dataText}>
@@ -355,16 +295,6 @@ const styles = StyleSheet.create({
         fontSize: 18,
         marginBottom: 8,
     },
-    recordButton: {
-        backgroundColor: '#22C55E',
-        padding: 12,
-        borderRadius: 8,
-        alignItems: 'center',
-        marginTop: 16,
-    },
-    buttonContainer: {
-        marginTop: 16,
-    }
 });
 
 export default MinimalLiveScreen;
