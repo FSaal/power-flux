@@ -1,4 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     PermissionsAndroid,
@@ -9,30 +11,39 @@ import {
     View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
+import { dbService } from '../../services/database';
 
-// BLE Configuration
 const BLE_CONFIG = {
     DEVICE_NAME: 'PowerFlux',
     SERVICE_UUID: '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
     CHARACTERISTIC_UUID: 'beb5483e-36e1-4688-b7f5-ea07361b26a8',
-} as const;
+};
+interface RecordingRef {
+    isRecording: boolean;
+    sessionId: string | null;
+}
+
 
 interface SensorData {
     magnitude: number;
     timestamp: number;
 }
 
-const MinimalLiveScreen: React.FC = () => {
-    // Create BLE manager as a ref to persist between renders
+const LiveScreen = () => {
     const [bleManager] = useState(() => new BleManager());
     const [isConnected, setIsConnected] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
+    const [isRecording, setIsRecording] = useState(false);
+    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const [sensorData, setSensorData] = useState<SensorData>({
         magnitude: 0,
         timestamp: 0,
     });
+    const recordingRef = useRef<RecordingRef>({
+        isRecording: false,
+        sessionId: null,
+    });
 
-    // Cleanup BLE manager on component unmount
     useEffect(() => {
         return () => {
             bleManager.destroy();
@@ -50,13 +61,7 @@ const MinimalLiveScreen: React.FC = () => {
 
                 const results = await Promise.all(
                     permissions.map(permission =>
-                        PermissionsAndroid.request(permission, {
-                            title: `${permission.split('.').pop()} Permission`,
-                            message: `App needs ${permission.split('.').pop()} permission`,
-                            buttonNeutral: "Ask Me Later",
-                            buttonNegative: "Cancel",
-                            buttonPositive: "OK"
-                        })
+                        PermissionsAndroid.request(permission)
                     )
                 );
 
@@ -83,18 +88,69 @@ const MinimalLiveScreen: React.FC = () => {
         };
     };
 
+    const handleSensorData = useCallback(async (data: SensorData) => {
+        console.log('Received data:', data);
+        setSensorData(data);
+
+        // Use ref values instead of state
+        const { isRecording, sessionId } = recordingRef.current;
+        console.log('Current recording status (ref):', isRecording, 'Session ID:', sessionId);
+
+        if (isRecording && sessionId) {
+            console.log('Storing measurement for session:', sessionId);
+            try {
+                await dbService.storeMeasurement({
+                    magnitude: data.magnitude,
+                    timestamp: data.timestamp,
+                    sessionId: sessionId
+                });
+                console.log('Measurement stored successfully');
+            } catch (error) {
+                console.error('Storage error details:', error);
+                Alert.alert('Storage Error', 'Failed to store measurement');
+            }
+        }
+    }, []);
+
+    const toggleRecording = useCallback(async () => {
+        try {
+            if (!recordingRef.current.isRecording) {
+                const sessionId = await dbService.startSession();
+                // Update ref and state together
+                recordingRef.current = { isRecording: true, sessionId };
+                setIsRecording(true);
+                setCurrentSessionId(sessionId);
+                console.log('Starting recording with session:', sessionId);
+            } else if (recordingRef.current.sessionId) {
+                const currentSession = recordingRef.current.sessionId;
+                // End the session first
+                await dbService.endSession(currentSession);
+                // Update ref and state together
+                recordingRef.current = { isRecording: false, sessionId: null };
+                setIsRecording(false);
+                setCurrentSessionId(null);
+                console.log('Ended recording session:', currentSession);
+            }
+        } catch (error) {
+            console.error('Recording toggle error:', error);
+            // Reset both ref and state on error
+            recordingRef.current = { isRecording: false, sessionId: null };
+            setIsRecording(false);
+            setCurrentSessionId(null);
+            Alert.alert('Recording Error', 'Failed to toggle recording');
+        }
+    }, []);
+
+    useEffect(() => {
+        console.log('Recording state changed:', isRecording, 'Session:', currentSessionId);
+    }, [isRecording, currentSessionId]);
+
     const connectToDevice = async (device: Device) => {
         try {
-            console.log('Connecting to device:', device.name);
             const connectedDevice = await device.connect();
-            console.log('Connected, discovering services...');
-
             const deviceWithServices = await connectedDevice.discoverAllServicesAndCharacteristics();
-            console.log('Services discovered');
-
             setIsConnected(true);
 
-            // Subscribe to notifications
             deviceWithServices.monitorCharacteristicForService(
                 BLE_CONFIG.SERVICE_UUID,
                 BLE_CONFIG.CHARACTERISTIC_UUID,
@@ -107,7 +163,7 @@ const MinimalLiveScreen: React.FC = () => {
                     if (characteristic?.value) {
                         try {
                             const newData = parseSensorData(characteristic.value);
-                            setSensorData(newData);
+                            handleSensorData(newData);
                         } catch (parseError) {
                             console.error('Error parsing data:', parseError);
                         }
@@ -122,30 +178,22 @@ const MinimalLiveScreen: React.FC = () => {
     };
 
     const startScan = useCallback(async () => {
-        if (isScanning) {
-            console.log('Already scanning...');
-            return;
-        }
+        if (isScanning) return;
 
         try {
-            // Check permissions first
             const permissionsGranted = await requestPermissions();
             if (!permissionsGranted) {
                 Alert.alert('Permission Error', 'Required permissions not granted');
                 return;
             }
 
-            // Check if Bluetooth is powered on
             const state = await bleManager.state();
-            console.log('Bluetooth state:', state);
-
             if (state !== 'PoweredOn') {
-                Alert.alert('Bluetooth Error', 'Please enable Bluetooth and try again');
+                Alert.alert('Bluetooth Error', 'Please enable Bluetooth');
                 return;
             }
 
             setIsScanning(true);
-            console.log('Starting scan...');
 
             bleManager.startDeviceScan(
                 null,
@@ -158,7 +206,6 @@ const MinimalLiveScreen: React.FC = () => {
                     }
 
                     if (device?.name === BLE_CONFIG.DEVICE_NAME) {
-                        console.log('Found device:', device.name);
                         bleManager.stopDeviceScan();
                         setIsScanning(false);
                         await connectToDevice(device);
@@ -166,10 +213,8 @@ const MinimalLiveScreen: React.FC = () => {
                 }
             );
 
-            // Stop scan after 10 seconds
             setTimeout(() => {
                 if (isScanning) {
-                    console.log('Scan timeout, stopping...');
                     bleManager.stopDeviceScan();
                     setIsScanning(false);
                 }
@@ -182,6 +227,30 @@ const MinimalLiveScreen: React.FC = () => {
         }
     }, [bleManager, isScanning]);
 
+    const exportData = async () => {
+        try {
+            const sessions = await dbService.getSessions();
+            if (sessions.length === 0) {
+                Alert.alert('No Data', 'No recorded sessions found');
+                return;
+            }
+
+            const latestSession = sessions[0];
+            const csvContent = await dbService.exportSessionToCSV(latestSession.id);
+
+            const path = `${FileSystem.documentDirectory}powerflux_${latestSession.id}.csv`;
+            await FileSystem.writeAsStringAsync(path, csvContent);
+
+            await Sharing.shareAsync(path, {
+                mimeType: 'text/csv',
+                dialogTitle: 'Export PowerFlux Data'
+            });
+        } catch (error) {
+            console.error('Export error:', error);
+            Alert.alert('Export Error', 'Failed to export data');
+        }
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.statusContainer}>
@@ -192,17 +261,37 @@ const MinimalLiveScreen: React.FC = () => {
                 <Text style={styles.statusText}>
                     {isConnected ? 'Connected' : isScanning ? 'Scanning...' : 'Disconnected'}
                 </Text>
+                {isRecording && (
+                    <View style={[styles.recordingDot, styles.pulsingDot]} />
+                )}
             </View>
 
-            <TouchableOpacity
-                style={styles.scanButton}
-                onPress={startScan}
-                disabled={isScanning}
-            >
-                <Text style={styles.buttonText}>
-                    {isScanning ? 'Scanning...' : isConnected ? 'Reconnect' : 'Scan for Device'}
-                </Text>
-            </TouchableOpacity>
+            <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                    style={[styles.button, styles.scanButton]}
+                    onPress={startScan}
+                    disabled={isScanning}
+                >
+                    <Text style={styles.buttonText}>
+                        {isScanning ? 'Scanning...' : isConnected ? 'Reconnect' : 'Scan for Device'}
+                    </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={[
+                        styles.button,
+                        styles.recordButton,
+                        !isConnected && styles.buttonDisabled,
+                        isRecording && styles.stopButton,
+                    ]}
+                    onPress={toggleRecording}
+                    disabled={!isConnected}
+                >
+                    <Text style={styles.buttonText}>
+                        {isRecording ? 'Stop Recording' : 'Start Recording'}
+                    </Text>
+                </TouchableOpacity>
+            </View>
 
             <View style={styles.dataContainer}>
                 <Text style={styles.dataText}>
@@ -212,6 +301,12 @@ const MinimalLiveScreen: React.FC = () => {
                     Time: {sensorData.timestamp} ms
                 </Text>
             </View>
+            <TouchableOpacity
+                style={[styles.button, styles.exportButton]}
+                onPress={exportData}
+            >
+                <Text style={styles.buttonText}>Export Latest Session</Text>
+            </TouchableOpacity>
         </View>
     );
 };
@@ -233,17 +328,43 @@ const styles = StyleSheet.create({
         borderRadius: 6,
         marginRight: 8,
     },
+    recordingDot: {
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: '#EF4444',
+        marginLeft: 8,
+    },
+    pulsingDot: {
+        opacity: 0.8,
+    },
     statusText: {
         fontSize: 16,
         color: '#ffffff',
     },
-    scanButton: {
-        backgroundColor: '#6544C0',
+    buttonContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 16,
+    },
+    button: {
+        flex: 1,
         padding: 12,
         borderRadius: 8,
         alignItems: 'center',
-        marginBottom: 16,
-        opacity: 1,
+        marginHorizontal: 4,
+    },
+    scanButton: {
+        backgroundColor: '#6544C0',
+    },
+    recordButton: {
+        backgroundColor: '#22C55E',
+    },
+    stopButton: {
+        backgroundColor: '#EF4444',
+    },
+    buttonDisabled: {
+        opacity: 0.5,
     },
     buttonText: {
         color: '#ffffff',
@@ -260,6 +381,10 @@ const styles = StyleSheet.create({
         fontSize: 18,
         marginBottom: 8,
     },
+    exportButton: {
+        backgroundColor: '#3B82F6',
+        marginTop: 16,
+    },
 });
 
-export default MinimalLiveScreen;
+export default LiveScreen;
