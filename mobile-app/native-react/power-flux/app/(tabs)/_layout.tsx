@@ -4,6 +4,7 @@ import { Tabs } from 'expo-router';
 export default function TabLayout() {
     return (
         <Tabs
+            initialRouteName="train"  // Set initial route directly
             screenOptions={{
                 tabBarActiveTintColor: '#6544C0',
                 headerStyle: {
@@ -17,12 +18,12 @@ export default function TabLayout() {
             }}
         >
             <Tabs.Screen
-                name="index"
+                name="train"
                 options={{
-                    title: 'Home',
+                    title: 'Train',
                     tabBarIcon: ({ color, focused }) => (
                         <MaterialCommunityIcons
-                            name={focused ? "home" : "home-outline"}
+                            name={focused ? "weight-lifter" : "weight-lifter"}  // Dumbbell is perfect for training
                             color={color}
                             size={24}
                         />
@@ -35,7 +36,20 @@ export default function TabLayout() {
                     title: 'Live',
                     tabBarIcon: ({ color, focused }) => (
                         <MaterialCommunityIcons
-                            name={focused ? "lightning-bolt" : "lightning-bolt-outline"}
+                            name={focused ? "pulse" : "pulse"}  // Better represents real-time data
+                            color={color}
+                            size={24}
+                        />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="history"
+                options={{
+                    title: 'History',
+                    tabBarIcon: ({ color, focused }) => (
+                        <MaterialCommunityIcons
+                            name={focused ? "chart-box" : "history"}  // Better represents historical data
                             color={color}
                             size={24}
                         />

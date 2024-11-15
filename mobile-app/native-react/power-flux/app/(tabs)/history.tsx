@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 export default function AboutScreen() {
     return (
         <View style={styles.container} >
-            <Text style={styles.text}> About screen </Text>
+            <Text style={styles.text}> Placeholder. This page will contain the history of measurements. </Text>
         </View>
     );
 }
