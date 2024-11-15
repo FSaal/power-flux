@@ -1,8 +1,13 @@
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Alert } from 'react-native';
 import { BleManager } from 'react-native-ble-plx';
-interface SensorData {
-    magnitude: number;
+export interface SensorData {
+    accX: number;
+    accY: number;
+    accZ: number;
+    gyrX: number;
+    gyrY: number;
+    gyrZ: number;
     timestamp: number;
 }
 interface BLEContextType {
@@ -17,6 +22,9 @@ interface BLEContextType {
 }
 
 const BLEContext = createContext<BLEContextType | undefined>(undefined);
+const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+const CHAR_ACC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+const CHAR_GYR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a9';
 
 export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [bleManager] = useState(() => new BleManager());
@@ -24,6 +32,8 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const [isScanning, setIsScanning] = useState(false);
     const [sensorData, setSensorData] = useState<SensorData | null>(null);
     const [onDataReceived, setOnDataReceived] = useState<((data: SensorData) => void) | undefined>(undefined);
+    const [accData, setAccData] = useState({ accX: 0, accY: 0, accZ: 0, timestamp: 0 });
+    const [gyrData, setGyrData] = useState({ gyrX: 0, gyrY: 0, gyrZ: 0, timestamp: 0 });
 
     const startScan = useCallback(async () => {
         if (isScanning) return;
@@ -46,38 +56,81 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                             const connectedDevice = await device.connect();
                             await connectedDevice.discoverAllServicesAndCharacteristics();
 
-                            // Subscribe to notifications
-                            const service = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
-                            const characteristic = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
-
+                            // Subscribe to accelerometer notifications
                             connectedDevice.monitorCharacteristicForService(
-                                service,
-                                characteristic,
+                                '4fafc201-1fb5-459e-8fcc-c5c9c331914b',  // SERVICE_UUID
+                                'beb5483e-36e1-4688-b7f5-ea07361b26a8',  // CHAR_ACC_UUID
                                 (error, characteristic) => {
                                     if (error) {
-                                        console.error('Monitoring error:', error);
+                                        console.error('Acc monitoring error:', error);
                                         return;
                                     }
 
                                     if (characteristic?.value) {
-                                        // Convert base64 to array buffer
                                         const base64 = characteristic.value;
                                         const binaryString = atob(base64);
                                         const bytes = new Uint8Array(binaryString.length);
+
                                         for (let i = 0; i < binaryString.length; i++) {
                                             bytes[i] = binaryString.charCodeAt(i);
                                         }
 
-                                        // Use DataView to read the values
                                         const dataView = new DataView(bytes.buffer);
-                                        const magnitude = dataView.getFloat32(0, true); // true for little-endian
-                                        const timestamp = dataView.getUint32(4, true); // true for little-endian
+                                        const accX = dataView.getFloat32(0, true);
+                                        const accY = dataView.getFloat32(4, true);
+                                        const accZ = dataView.getFloat32(8, true);
+                                        const timestamp = dataView.getUint32(12, true);
 
-                                        const data = { magnitude, timestamp };
-                                        setSensorData(data);
-                                        if (onDataReceived) {
-                                            onDataReceived(data);
+                                        setAccData({ accX, accY, accZ, timestamp });
+                                        setSensorData(prev => ({
+                                            ...prev,  // Keep existing gyroscope data
+                                            accX,
+                                            accY,
+                                            accZ,
+                                            gyrX: prev?.gyrX || 0,
+                                            gyrY: prev?.gyrY || 0,
+                                            gyrZ: prev?.gyrZ || 0,
+                                            timestamp: Math.max(prev?.timestamp || 0, timestamp)
+                                        }));
+                                    }
+                                }
+                            );
+
+                            // Subscribe to gyroscope notifications
+                            connectedDevice.monitorCharacteristicForService(
+                                '4fafc201-1fb5-459e-8fcc-c5c9c331914b',  // SERVICE_UUID
+                                'beb5483e-36e1-4688-b7f5-ea07361b26a9',  // CHAR_GYR_UUID
+                                (error, characteristic) => {
+                                    if (error) {
+                                        console.error('Gyr monitoring error:', error);
+                                        return;
+                                    }
+
+                                    if (characteristic?.value) {
+                                        const base64 = characteristic.value;
+                                        const binaryString = atob(base64);
+                                        const bytes = new Uint8Array(binaryString.length);
+
+                                        for (let i = 0; i < binaryString.length; i++) {
+                                            bytes[i] = binaryString.charCodeAt(i);
                                         }
+
+                                        const dataView = new DataView(bytes.buffer);
+                                        const gyrX = dataView.getFloat32(0, true);
+                                        const gyrY = dataView.getFloat32(4, true);
+                                        const gyrZ = dataView.getFloat32(8, true);
+                                        const timestamp = dataView.getUint32(12, true);
+
+                                        setGyrData({ gyrX, gyrY, gyrZ, timestamp });
+                                        setSensorData(prev => ({
+                                            accX: prev?.accX || 0,
+                                            accY: prev?.accY || 0,
+                                            accZ: prev?.accZ || 0,
+                                            gyrX,
+                                            gyrY,
+                                            gyrZ,
+                                            timestamp: Math.max(prev?.timestamp || 0, timestamp)
+                                        }));
                                     }
                                 }
                             );
@@ -141,3 +194,4 @@ export const useBLE = () => {
     }
     return context;
 };
+

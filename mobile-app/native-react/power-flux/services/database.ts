@@ -4,7 +4,12 @@ import { Platform } from 'react-native';
 
 interface IMeasurement {
     id?: number;
-    magnitude: number;
+    accX: number;
+    accY: number;
+    accZ: number;
+    gyrX: number;
+    gyrY: number;
+    gyrZ: number;
     timestamp: number;
     sessionId: string;
 }
@@ -95,9 +100,9 @@ class DatabaseService {
         try {
             await this.db!.withTransactionAsync(async () => {
                 await this.db!.runAsync(
-                    `INSERT INTO measurements (magnitude, timestamp, sessionId) 
-                     VALUES (?, ?, ?)`,
-                    [measurement.magnitude, measurement.timestamp, measurement.sessionId]
+                    `INSERT INTO measurements (accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp, sessionId) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [measurement.accX, measurement.accY, measurement.accZ, measurement.gyrX, measurement.gyrY, measurement.gyrZ, measurement.timestamp, measurement.sessionId]
                 );
             });
         } catch (error) {
@@ -133,9 +138,9 @@ class DatabaseService {
 
     async exportSessionToCSV(sessionId: string): Promise<string> {
         const measurements = await this.getSessionMeasurements(sessionId);
-        let csv = 'timestamp,magnitude\n';
+        let csv = 'timestamp,accX,accY,accZ,gyrX,gyrY,gyrZ\n';
         measurements.forEach(measurement => {
-            csv += `${measurement.timestamp},${measurement.magnitude}\n`;
+            csv += `${measurement.timestamp},${measurement.accX},${measurement.accY},${measurement.accZ},${measurement.gyrX},${measurement.gyrY},${measurement.gyrZ}\n`;
         });
         return csv;
     }

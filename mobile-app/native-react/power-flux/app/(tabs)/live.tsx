@@ -1,24 +1,20 @@
+import { useBLE } from '@/services/BLEContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { SensorData } from '../../services/BLEContext';
 import {
     Alert,
+    Pressable,
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+    View,
 } from 'react-native';
-import { useBLE } from '../../services/BLEContext';
 import { dbService } from '../../services/database';
-
 
 interface RecordingRef {
     isRecording: boolean;
     sessionId: string | null;
-}
-
-interface SensorData {
-    magnitude: number;
-    timestamp: number;
 }
 
 const LiveScreen = () => {
@@ -26,10 +22,16 @@ const LiveScreen = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const [measurementCount, setMeasurementCount] = useState(0);
+    const [showDetails, setShowDetails] = useState(false);
     const recordingRef = useRef<RecordingRef>({
         isRecording: false,
         sessionId: null,
     });
+
+    // Calculate magnitude from acceleration components
+    const calculateMagnitude = (x: number, y: number, z: number): number => {
+        return Math.sqrt(x * x + y * y + z * z);
+    };
 
     const handleSensorData = useCallback(async (data: SensorData) => {
         const { isRecording, sessionId } = recordingRef.current;
@@ -37,7 +39,12 @@ const LiveScreen = () => {
         if (isRecording && sessionId) {
             try {
                 await dbService.storeMeasurement({
-                    magnitude: data.magnitude,
+                    accX: data.accX,
+                    accY: data.accY,
+                    accZ: data.accZ,
+                    gyrX: data.gyrX,
+                    gyrY: data.gyrY,
+                    gyrZ: data.gyrZ,
                     timestamp: data.timestamp,
                     sessionId: sessionId
                 });
@@ -52,10 +59,7 @@ const LiveScreen = () => {
     // Set up data handler
     useEffect(() => {
         setOnDataReceived(handleSensorData);
-
-        return () => {
-            setOnDataReceived(undefined);
-        };
+        return () => setOnDataReceived(undefined);
     }, [handleSensorData, setOnDataReceived]);
 
     const toggleRecording = useCallback(async () => {
@@ -77,6 +81,11 @@ const LiveScreen = () => {
             Alert.alert('Recording Error', 'Failed to toggle recording');
         }
     }, []);
+
+    // Calculate current magnitude
+    const magnitude = sensorData
+        ? calculateMagnitude(sensorData.accX, sensorData.accY, sensorData.accZ)
+        : 0;
 
     return (
         <View style={styles.container}>
@@ -102,13 +111,34 @@ const LiveScreen = () => {
             </View>
 
             {/* Main Data Display */}
-            <View style={styles.mainDisplay}>
-                <Text style={styles.dataLabel}>Acceleration</Text>
+            <Pressable
+                style={styles.mainDisplay}
+                onPress={() => setShowDetails(!showDetails)}
+            >
+                <Text style={styles.dataLabel}>Acceleration Magnitude</Text>
                 <Text style={styles.dataValue}>
-                    {(sensorData?.magnitude ?? 0).toFixed(2)}
+                    {magnitude.toFixed(2)}
                     <Text style={styles.dataUnit}> m/s²</Text>
                 </Text>
-            </View>
+
+                {showDetails && sensorData && (
+                    <View style={styles.detailsContainer}>
+                        <View style={styles.detailsSection}>
+                            <Text style={styles.detailsHeader}>Accelerometer (m/s²)</Text>
+                            <Text style={styles.detailsText}>X: {sensorData.accX.toFixed(2)}</Text>
+                            <Text style={styles.detailsText}>Y: {sensorData.accY.toFixed(2)}</Text>
+                            <Text style={styles.detailsText}>Z: {sensorData.accZ.toFixed(2)}</Text>
+                        </View>
+
+                        <View style={styles.detailsSection}>
+                            <Text style={styles.detailsHeader}>Gyroscope (rad/s)</Text>
+                            <Text style={styles.detailsText}>X: {sensorData.gyrX.toFixed(2)}</Text>
+                            <Text style={styles.detailsText}>Y: {sensorData.gyrY.toFixed(2)}</Text>
+                            <Text style={styles.detailsText}>Z: {sensorData.gyrZ.toFixed(2)}</Text>
+                        </View>
+                    </View>
+                )}
+            </Pressable>
 
             {/* Recording Control */}
             <View style={styles.controls}>
@@ -174,6 +204,26 @@ const styles = StyleSheet.create({
     dataUnit: {
         fontSize: 24,
         color: '#9CA3AF',
+    },
+    detailsContainer: {
+        width: '100%',
+        marginTop: 24,
+        padding: 16,
+        backgroundColor: '#1F2937',
+        borderRadius: 12,
+        gap: 16,
+    },
+    detailsSection: {
+        gap: 8,
+    },
+    detailsHeader: {
+        color: '#9CA3AF',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    detailsText: {
+        color: '#FFFFFF',
+        fontSize: 14,
     },
     controls: {
         padding: 16,
