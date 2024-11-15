@@ -1,4 +1,4 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 
 export default function TabLayout() {
@@ -21,16 +21,11 @@ export default function TabLayout() {
                 options={{
                     title: 'Home',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? 'home-sharp' : 'home-outline'} color={color} size={24} />
-                    ),
-                }}
-            />
-            <Tabs.Screen
-                name="about"
-                options={{
-                    title: 'About',
-                    tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? 'information-circle' : 'information-circle-outline'} color={color} size={24} />
+                        <MaterialCommunityIcons
+                            name={focused ? "home" : "home-outline"}
+                            color={color}
+                            size={24}
+                        />
                     ),
                 }}
             />
@@ -39,7 +34,24 @@ export default function TabLayout() {
                 options={{
                     title: 'Live',
                     tabBarIcon: ({ color, focused }) => (
-                        <Ionicons name={focused ? 'videocam' : 'videocam-outline'} color={color} size={24} />
+                        <MaterialCommunityIcons
+                            name={focused ? "lightning-bolt" : "lightning-bolt-outline"}
+                            color={color}
+                            size={24}
+                        />
+                    ),
+                }}
+            />
+            <Tabs.Screen
+                name="settings"
+                options={{
+                    title: 'Settings',
+                    tabBarIcon: ({ color, focused }) => (
+                        <MaterialCommunityIcons
+                            name={focused ? "cog" : "cog-outline"}
+                            color={color}
+                            size={24}
+                        />
                     ),
                 }}
             />
