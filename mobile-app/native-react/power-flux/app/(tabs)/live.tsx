@@ -8,15 +8,13 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { BleManager, State as BleState, Device } from 'react-native-ble-plx';
+import { BleManager, Device } from 'react-native-ble-plx';
 
 // BLE Configuration
 const BLE_CONFIG = {
-    DEVICE_NAME: 'M5Debug',
+    DEVICE_NAME: 'PowerFlux',
     SERVICE_UUID: '4fafc201-1fb5-459e-8fcc-c5c9c331914b',
     CHARACTERISTIC_UUID: 'beb5483e-36e1-4688-b7f5-ea07361b26a8',
-    SCAN_TIMEOUT: 10000, // 10 seconds
-    RECONNECT_DELAY: 1000, // 1 second
 } as const;
 
 interface SensorData {
@@ -25,6 +23,7 @@ interface SensorData {
 }
 
 const MinimalLiveScreen: React.FC = () => {
+    // Create BLE manager as a ref to persist between renders
     const [bleManager] = useState(() => new BleManager());
     const [isConnected, setIsConnected] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
@@ -32,30 +31,13 @@ const MinimalLiveScreen: React.FC = () => {
         magnitude: 0,
         timestamp: 0,
     });
-    const [device, setDevice] = useState<Device | null>(null);
 
     // Cleanup BLE manager on component unmount
     useEffect(() => {
         return () => {
-            console.log('Destroying BLE manager');
-            if (device) {
-                device.cancelConnection();
-            }
             bleManager.destroy();
         };
-    }, [bleManager, device]);
-
-    // Auto-reconnection logic
-    useEffect(() => {
-        const reconnectionInterval = setInterval(() => {
-            if (!isConnected && !isScanning) {
-                console.log('Attempting to reconnect...');
-                startScan();
-            }
-        }, BLE_CONFIG.RECONNECT_DELAY);
-
-        return () => clearInterval(reconnectionInterval);
-    }, [isConnected, isScanning]);
+    }, [bleManager]);
 
     const requestPermissions = async (): Promise<boolean> => {
         if (Platform.OS === 'android' && Platform.Version >= 23) {
@@ -78,14 +60,7 @@ const MinimalLiveScreen: React.FC = () => {
                     )
                 );
 
-                const granted = results.every(result => result === 'granted');
-                if (!granted) {
-                    Alert.alert(
-                        'Permissions Required',
-                        'Please grant all required permissions to use BLE features'
-                    );
-                }
-                return granted;
+                return results.every(result => result === 'granted');
             } catch (err) {
                 console.warn('Permission request error:', err);
                 return false;
@@ -111,13 +86,12 @@ const MinimalLiveScreen: React.FC = () => {
     const connectToDevice = async (device: Device) => {
         try {
             console.log('Connecting to device:', device.name);
-            const connectedDevice = await device.connect({ timeout: 5000 });
+            const connectedDevice = await device.connect();
             console.log('Connected, discovering services...');
 
             const deviceWithServices = await connectedDevice.discoverAllServicesAndCharacteristics();
             console.log('Services discovered');
 
-            setDevice(deviceWithServices);
             setIsConnected(true);
 
             // Subscribe to notifications
@@ -140,19 +114,10 @@ const MinimalLiveScreen: React.FC = () => {
                     }
                 }
             );
-
-            // Setup disconnect listener
-            deviceWithServices.onDisconnected((error, disconnectedDevice) => {
-                console.log('Device disconnected:', disconnectedDevice?.name);
-                setIsConnected(false);
-                setDevice(null);
-            });
-
         } catch (error) {
             console.error('Connection error:', error);
             setIsConnected(false);
-            setDevice(null);
-            Alert.alert('Connection Error', 'Failed to connect to device. Please try again.');
+            Alert.alert('Connection Error', 'Failed to connect to device');
         }
     };
 
@@ -166,6 +131,7 @@ const MinimalLiveScreen: React.FC = () => {
             // Check permissions first
             const permissionsGranted = await requestPermissions();
             if (!permissionsGranted) {
+                Alert.alert('Permission Error', 'Required permissions not granted');
                 return;
             }
 
@@ -173,7 +139,7 @@ const MinimalLiveScreen: React.FC = () => {
             const state = await bleManager.state();
             console.log('Bluetooth state:', state);
 
-            if (state !== BleState.PoweredOn) {
+            if (state !== 'PoweredOn') {
                 Alert.alert('Bluetooth Error', 'Please enable Bluetooth and try again');
                 return;
             }
@@ -184,31 +150,30 @@ const MinimalLiveScreen: React.FC = () => {
             bleManager.startDeviceScan(
                 null,
                 { allowDuplicates: false },
-                (error, scannedDevice) => {
+                async (error, device) => {
                     if (error) {
                         console.error('Scan error:', error);
                         setIsScanning(false);
-                        Alert.alert('Scan Error', `Failed to scan: ${error.message}`);
                         return;
                     }
 
-                    if (scannedDevice?.name === BLE_CONFIG.DEVICE_NAME) {
-                        console.log('Found device:', scannedDevice.name);
+                    if (device?.name === BLE_CONFIG.DEVICE_NAME) {
+                        console.log('Found device:', device.name);
                         bleManager.stopDeviceScan();
                         setIsScanning(false);
-                        connectToDevice(scannedDevice);
+                        await connectToDevice(device);
                     }
                 }
             );
 
-            // Stop scan after timeout
+            // Stop scan after 10 seconds
             setTimeout(() => {
                 if (isScanning) {
                     console.log('Scan timeout, stopping...');
                     bleManager.stopDeviceScan();
                     setIsScanning(false);
                 }
-            }, BLE_CONFIG.SCAN_TIMEOUT);
+            }, 10000);
 
         } catch (error) {
             console.error('Scan error:', error);
