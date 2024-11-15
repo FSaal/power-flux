@@ -37,5 +37,6 @@ docs/context
 testing/
 *.txt
 mobile-app/.expo
+mobile-app/native-react/.expo
 
 
