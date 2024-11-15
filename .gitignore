@@ -36,5 +36,6 @@ ENV/
 docs/context
 testing/
 *.txt
+mobile-app/.expo
 
 
