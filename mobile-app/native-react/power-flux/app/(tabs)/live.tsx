@@ -1,7 +1,6 @@
 import { useBLE } from '@/services/BLEContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { SensorData } from '../../services/BLEContext';
 import {
     Alert,
     Pressable,
@@ -10,12 +9,60 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { SensorData } from '../../services/BLEContext';
 import { dbService } from '../../services/database';
 
 interface RecordingRef {
     isRecording: boolean;
     sessionId: string | null;
 }
+interface BlinkingRecordIndicatorProps {
+    startTime: number;
+}
+
+interface BlinkingRecordIndicatorProps {
+    startTime: number;
+}
+
+const BlinkingRecordIndicator: React.FC<BlinkingRecordIndicatorProps> = ({ startTime }) => {
+    const [visible, setVisible] = useState(true);
+    const [elapsedTime, setElapsedTime] = useState('0:00');
+
+    useEffect(() => {
+        // Blink effect
+        const blinkInterval = setInterval(() => {
+            setVisible(prev => !prev);
+        }, 500);
+
+        // Time update effect
+        const timeInterval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const minutes = Math.floor(elapsed / 60000);
+            const seconds = Math.floor((elapsed % 60000) / 1000);
+            setElapsedTime(`${minutes}:${seconds.toString().padStart(2, '0')}`);
+        }, 1000);
+
+        return () => {
+            clearInterval(blinkInterval);
+            clearInterval(timeInterval);
+        };
+    }, [startTime]);
+
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {visible && (
+                <MaterialCommunityIcons
+                    name="record-circle"
+                    size={20}
+                    color="#EF4444"
+                />
+            )}
+            <Text style={{ color: '#FFFFFF', fontSize: 14 }}>
+                {elapsedTime}
+            </Text>
+        </View>
+    );
+};
 
 const LiveScreen = () => {
     const { isConnected, sensorData, setOnDataReceived } = useBLE();
@@ -27,6 +74,7 @@ const LiveScreen = () => {
         isRecording: false,
         sessionId: null,
     });
+    const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
 
     // Calculate magnitude from acceleration components
     const calculateMagnitude = (x: number, y: number, z: number): number => {
@@ -48,7 +96,7 @@ const LiveScreen = () => {
                     timestamp: data.timestamp,
                     sessionId: sessionId
                 });
-                setMeasurementCount(prev => prev + 1);
+                setMeasurementCount(prevCount => prevCount + 1);
             } catch (error) {
                 console.error('Storage error:', error);
                 Alert.alert('Storage Error', 'Failed to store measurement');
@@ -65,7 +113,7 @@ const LiveScreen = () => {
     const toggleRecording = useCallback(async () => {
         try {
             if (!recordingRef.current.isRecording) {
-                setMeasurementCount(0);
+                setRecordingStartTime(Date.now());
                 const sessionId = await dbService.startSession();
                 recordingRef.current = { isRecording: true, sessionId };
                 setIsRecording(true);
@@ -97,16 +145,7 @@ const LiveScreen = () => {
                     color={isConnected ? "#22C55E" : "#EF4444"}
                 />
                 {isRecording && (
-                    <View style={styles.recordingIndicator}>
-                        <MaterialCommunityIcons
-                            name="record-circle"
-                            size={20}
-                            color="#EF4444"
-                        />
-                        <Text style={styles.measurementCount}>
-                            {measurementCount} samples
-                        </Text>
-                    </View>
+                    <BlinkingRecordIndicator startTime={recordingStartTime} />
                 )}
             </View>
 
