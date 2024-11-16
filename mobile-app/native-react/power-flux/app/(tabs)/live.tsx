@@ -1,3 +1,11 @@
+/**
+ * live.tsx
+ * 
+ * This component provides real-time visualization and recording of sensor data
+ * from the M5Stack device. It displays accelerometer and gyroscope readings,
+ * handles recording sessions, and manages data storage.
+ */
+
 import { useBLE } from '@/services/BLEContext';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -7,34 +15,49 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View,
+    View
 } from 'react-native';
 import { SensorData } from '../../services/BLEContext';
 import { dbService } from '../../services/database';
+
+/**
+ * Logger utility for consistent log formatting
+ */
+const Logger = {
+    error: (message: string, ...args: any[]) => {
+        console.error(`[LiveScreen] ERROR: ${message}`, ...args);
+    },
+    warn: (message: string, ...args: any[]) => {
+        console.warn(`[LiveScreen] WARN: ${message}`, ...args);
+    },
+    info: (message: string, ...args: any[]) => {
+        if (__DEV__) {
+            console.info(`[LiveScreen] INFO: ${message}`, ...args);
+        }
+    }
+};
 
 interface RecordingRef {
     isRecording: boolean;
     sessionId: string | null;
 }
-interface BlinkingRecordIndicatorProps {
-    startTime: number;
-}
 
 interface BlinkingRecordIndicatorProps {
     startTime: number;
 }
 
+/**
+ * Displays a blinking record indicator with elapsed time
+ */
 const BlinkingRecordIndicator: React.FC<BlinkingRecordIndicatorProps> = ({ startTime }) => {
     const [visible, setVisible] = useState(true);
     const [elapsedTime, setElapsedTime] = useState('0:00');
 
     useEffect(() => {
-        // Blink effect
         const blinkInterval = setInterval(() => {
             setVisible(prev => !prev);
         }, 500);
 
-        // Time update effect
         const timeInterval = setInterval(() => {
             const elapsed = Date.now() - startTime;
             const minutes = Math.floor(elapsed / 60000);
@@ -64,10 +87,12 @@ const BlinkingRecordIndicator: React.FC<BlinkingRecordIndicatorProps> = ({ start
     );
 };
 
+/**
+ * Main LiveScreen component for displaying and recording sensor data
+ */
 const LiveScreen = () => {
     const { isConnected, sensorData, setOnDataReceived } = useBLE();
     const [isRecording, setIsRecording] = useState(false);
-    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const [measurementCount, setMeasurementCount] = useState(0);
     const [showDetails, setShowDetails] = useState(false);
     const recordingRef = useRef<RecordingRef>({
@@ -76,15 +101,20 @@ const LiveScreen = () => {
     });
     const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
 
-    // Calculate magnitude from acceleration components
+    /**
+     * Calculates the magnitude of a 3D vector
+     */
     const calculateMagnitude = (x: number, y: number, z: number): number => {
         return Math.sqrt(x * x + y * y + z * z);
     };
 
+    /**
+     * Handles incoming sensor data, storing it if recording is active
+     */
     const handleSensorData = useCallback(async (data: SensorData) => {
         const { isRecording, sessionId } = recordingRef.current;
 
-        if (isRecording && sessionId) {
+        if (isRecording && sessionId && data) {
             try {
                 await dbService.storeMeasurement({
                     accX: data.accX,
@@ -96,48 +126,80 @@ const LiveScreen = () => {
                     timestamp: data.timestamp,
                     sessionId: sessionId
                 });
-                setMeasurementCount(prevCount => prevCount + 1);
+
+                setMeasurementCount(prev => prev + 1);
             } catch (error) {
-                console.error('Storage error:', error);
-                Alert.alert('Storage Error', 'Failed to store measurement');
+                Logger.error('Failed to store measurement:', error);
+                Alert.alert('Storage Error', 'Failed to save measurement data');
             }
         }
     }, []);
+
+    // Use ref to maintain latest callback reference
+    const handleSensorDataRef = useRef(handleSensorData);
+    useEffect(() => {
+        handleSensorDataRef.current = handleSensorData;
+    }, [handleSensorData]);
 
     // Set up data handler
     useEffect(() => {
-        setOnDataReceived(handleSensorData);
-        return () => setOnDataReceived(undefined);
-    }, [handleSensorData, setOnDataReceived]);
+        const dataHandler = async (data: SensorData) => {
+            await handleSensorDataRef.current(data);
+        };
 
+        setOnDataReceived(dataHandler);
+
+        return () => {
+            setOnDataReceived(undefined);
+        };
+    }, []);
+
+    /**
+     * Toggles recording state, handling session start/end
+     */
     const toggleRecording = useCallback(async () => {
         try {
             if (!recordingRef.current.isRecording) {
-                setRecordingStartTime(Date.now());
+                const startTime = Date.now();
+                Logger.info('Starting new recording session');
+
                 const sessionId = await dbService.startSession();
+                Logger.info('Session created:', { sessionId, startTime });
+
                 recordingRef.current = { isRecording: true, sessionId };
                 setIsRecording(true);
-                setCurrentSessionId(sessionId);
+                setRecordingStartTime(startTime);
+                setMeasurementCount(0);
+
             } else if (recordingRef.current.sessionId) {
-                await dbService.endSession(recordingRef.current.sessionId);
-                recordingRef.current = { isRecording: false, sessionId: null };
-                setIsRecording(false);
-                setCurrentSessionId(null);
+                const sessionId = recordingRef.current.sessionId;
+                Logger.info('Ending recording session:', { sessionId });
+
+                try {
+                    await dbService.endSession(sessionId);
+                    Logger.info('Session ended successfully');
+
+                    recordingRef.current = { isRecording: false, sessionId: null };
+                    setIsRecording(false);
+
+                } catch (error) {
+                    Logger.error('Error ending session:', error);
+                    throw error;
+                }
             }
         } catch (error) {
-            console.error('Recording error:', error);
+            Logger.error('Recording toggle error:', error);
             Alert.alert('Recording Error', 'Failed to toggle recording');
         }
-    }, []);
+    }, [measurementCount]);
 
-    // Calculate current magnitude
     const magnitude = sensorData
         ? calculateMagnitude(sensorData.accX, sensorData.accY, sensorData.accZ)
         : 0;
 
     return (
         <View style={styles.container}>
-            {/* Status Indicator */}
+            {/* Status Bar */}
             <View style={styles.statusIndicator}>
                 <MaterialCommunityIcons
                     name={isConnected ? "bluetooth-connect" : "bluetooth-off"}
@@ -149,7 +211,7 @@ const LiveScreen = () => {
                 )}
             </View>
 
-            {/* Main Data Display */}
+            {/* Main Display */}
             <Pressable
                 style={styles.mainDisplay}
                 onPress={() => setShowDetails(!showDetails)}
@@ -175,11 +237,20 @@ const LiveScreen = () => {
                             <Text style={styles.detailsText}>Y: {sensorData.gyrY.toFixed(2)}</Text>
                             <Text style={styles.detailsText}>Z: {sensorData.gyrZ.toFixed(2)}</Text>
                         </View>
+
+                        {isRecording && (
+                            <View style={styles.detailsSection}>
+                                <Text style={styles.detailsHeader}>Recording Stats</Text>
+                                <Text style={styles.detailsText}>
+                                    Measurements: {measurementCount}
+                                </Text>
+                            </View>
+                        )}
                     </View>
                 )}
             </Pressable>
 
-            {/* Recording Control */}
+            {/* Controls */}
             <View style={styles.controls}>
                 <TouchableOpacity
                     style={[
@@ -215,15 +286,6 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingVertical: 8,
-    },
-    recordingIndicator: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    measurementCount: {
-        color: '#FFFFFF',
-        fontSize: 14,
     },
     mainDisplay: {
         flex: 1,
