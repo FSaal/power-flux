@@ -11,17 +11,15 @@
         {
             "name": "Mobile App",
             "path": "mobile-app"
-        },
-        {
-            "name": "Web App",
-            "path": "web-app"
         }
     ],
     "settings": {
         "files.associations": {
             "*.h": "cpp",
             "*.cpp": "cpp",
-            "*.ino": "cpp"
+            "*.ino": "cpp",
+            "stdexcept": "cpp",
+            "string": "cpp"
         },
         "terminal.integrated.cwd": "${workspaceFolder}",
         "C_Cpp.intelliSenseEngine": "default",
@@ -35,7 +33,8 @@
             "**/.vscode/c_cpp_properties.json": true,
             "**/.vscode/launch.json": true,
             "**/.vscode/ipch": true
-        }
+        },
+        "liveServer.settings.multiRootWorkspaceName": "POWER FLUX (Root)"
     },
     "extensions": {
         "recommendations": [
