@@ -214,20 +214,20 @@ export default function HistoryScreen() {
     const handleExportSession = async (session: ISession) => {
         try {
             console.log('Starting export for session:', session.id);
-            const csv = await dbService.exportSessionToCSV(session.id);
-            console.log('CSV generated, length:', csv.length);
+            const sessionData = await dbService.exportSessionToJSON(session.id);
+            console.log('JSON generated, string length:', sessionData.length);
 
-            const filePath = `${FileSystem.documentDirectory}session_${session.id}.csv`;
+            const filePath = `${FileSystem.documentDirectory}session_${session.id}.json`;
             console.log('Writing to file:', filePath);
-            await FileSystem.writeAsStringAsync(filePath, csv);
+            await FileSystem.writeAsStringAsync(filePath, sessionData);
             console.log('File written successfully');
 
             if (await Sharing.isAvailableAsync()) {
                 console.log('Sharing file...');
                 await Sharing.shareAsync(filePath, {
-                    mimeType: 'text/csv',
+                    mimeType: 'text/json',
                     dialogTitle: 'Export Session Data',
-                    UTI: 'public.comma-separated-values-text'
+                    UTI: 'public.json'
                 });
                 console.log('File shared successfully');
             }

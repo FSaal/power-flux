@@ -172,6 +172,19 @@ class DatabaseService {
         }
     }
 
+    async getSessionMetaData(sessionId: string): Promise<ISession | null> {
+        await this.ensureDbInitialized();
+        try {
+            return await this.db!.getFirstAsync<ISession>(
+                'SELECT * FROM sessions WHERE id = ?',
+                [sessionId]
+            );
+        } catch (error) {
+            console.error('Error getting session metadata:', error);
+            throw error;
+        }
+    }
+
     async getSessionMeasurements(sessionId: string): Promise<IMeasurement[]> {
         await this.ensureDbInitialized();
         try {
@@ -221,24 +234,40 @@ class DatabaseService {
         }
     }
 
-    async exportSessionToCSV(sessionId: string): Promise<string> {
+    async exportSessionToJSON(sessionId: string): Promise<string> {
         try {
-            console.log('Starting CSV export for session:', sessionId);
-            const measurements = await this.getSessionMeasurements(sessionId);
-            console.log('Retrieved measurements for CSV:', measurements.length);
-
-            // Create CSV header
-            let csv = 'timestamp,accX,accY,accZ,gyrX,gyrY,gyrZ\n';
-
-            // Add data rows
-            measurements.forEach(measurement => {
-                csv += `${measurement.timestamp},${measurement.accX.toFixed(4)},${measurement.accY.toFixed(4)},${measurement.accZ.toFixed(4)},${measurement.gyrX.toFixed(4)},${measurement.gyrY.toFixed(4)},${measurement.gyrZ.toFixed(4)}\n`;
+            console.log('Starting JSON export for session:', sessionId);
+            const [metadata, measurements] = await Promise.all([
+                this.getSessionMetaData(sessionId),
+                this.getSessionMeasurements(sessionId)
+            ]);
+            console.log('Retrieved data for JSON:', {
+                hasMetadata: !!metadata,
+                measurementCount: measurements.length
             });
 
-            console.log('CSV generated, first 100 chars:', csv.substring(0, 100));
-            return csv;
+            // Create JSON object
+            const exportData = {
+                metadata,
+                measurements: measurements.map(measurement => ({
+                    timestamp: measurement.timestamp,
+                    acc: [
+                        measurement.accX,
+                        measurement.accY,
+                        measurement.accZ
+                    ],
+                    gyro: [
+                        measurement.gyrX,
+                        measurement.gyrY,
+                        measurement.gyrZ
+                    ]
+                }))
+            };
+            const jsonString = JSON.stringify(exportData);
+            console.log('JSON generated, first 100 chars:', jsonString.substring(0, 100));
+            return jsonString;
         } catch (error) {
-            console.error('Error in exportSessionToCSV:', error);
+            console.error('Error in exportSessionToJSON:', error);
             throw error;
         }
     }
