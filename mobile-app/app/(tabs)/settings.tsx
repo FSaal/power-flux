@@ -1,6 +1,12 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Animated, {
+    useAnimatedStyle,
+    withRepeat,
+    withSequence,
+    withTiming,
+} from 'react-native-reanimated';
 import { useBLE } from '../../services/BLEContext';
 
 interface CalibrationModalProps {
@@ -45,6 +51,38 @@ export default function SettingsScreen() {
                 <Text style={styles.statusText}>
                     Status: {isConnected ? "Connected" : isScanning ? "Scanning..." : "Disconnected"}
                 </Text>
+            </View>
+
+            {/* Connection Controls */}
+            <View style={styles.buttonContainer}>
+                {isConnected ? (
+                    <TouchableOpacity
+                        style={[styles.button, styles.disconnectButton]}
+                        onPress={disconnect}
+                    >
+                        <MaterialCommunityIcons
+                            name="bluetooth-off"
+                            size={24}
+                            color="white"
+                        />
+                        <Text style={styles.buttonText}>Disconnect</Text>
+                    </TouchableOpacity>
+                ) : (
+                    <TouchableOpacity
+                        style={[styles.button, styles.connectButton]}
+                        onPress={startScan}
+                        disabled={isScanning}
+                    >
+                        <MaterialCommunityIcons
+                            name="bluetooth-settings"
+                            size={24}
+                            color="white"
+                        />
+                        <Text style={styles.buttonText}>
+                            {isScanning ? "Scanning..." : "Scan for Device"}
+                        </Text>
+                    </TouchableOpacity>
+                )}
             </View>
 
             {/* Calibration Card */}
@@ -93,38 +131,6 @@ export default function SettingsScreen() {
                 )}
             </View>
 
-            {/* Connection Controls */}
-            <View style={styles.buttonContainer}>
-                {isConnected ? (
-                    <TouchableOpacity
-                        style={[styles.button, styles.disconnectButton]}
-                        onPress={disconnect}
-                    >
-                        <MaterialCommunityIcons
-                            name="bluetooth-off"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>Disconnect</Text>
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity
-                        style={[styles.button, styles.connectButton]}
-                        onPress={startScan}
-                        disabled={isScanning}
-                    >
-                        <MaterialCommunityIcons
-                            name="bluetooth-settings"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>
-                            {isScanning ? "Scanning..." : "Scan for Device"}
-                        </Text>
-                    </TouchableOpacity>
-                )}
-            </View>
-
             <CalibrationModal
                 visible={showCalibrationModal}
                 onClose={() => setShowCalibrationModal(false)}
@@ -133,6 +139,41 @@ export default function SettingsScreen() {
         </View>
     );
 }
+
+const PlaceDeviceAnimation = () => {
+    const animatedStyle = useAnimatedStyle(() => ({
+        transform: [
+            {
+                translateY: withRepeat(
+                    withSequence(
+                        withTiming(-20, { duration: 1000 }),
+                        withTiming(0, { duration: 1000 })
+                    ),
+                    -1
+                )
+            },
+            {
+                rotateZ: withRepeat(
+                    withSequence(
+                        withTiming('-10deg', { duration: 1000 }),
+                        withTiming('0deg', { duration: 1000 })
+                    ),
+                    -1
+                )
+            }
+        ]
+    }));
+
+    return (
+        <Animated.View style={[styles.animationContainer, animatedStyle]}>
+            <MaterialCommunityIcons
+                name="cellphone-text"
+                size={48}
+                color="#6544C0"
+            />
+        </Animated.View>
+    );
+};
 
 const CalibrationModal: React.FC<CalibrationModalProps> = ({
     visible,
@@ -163,11 +204,7 @@ const CalibrationModal: React.FC<CalibrationModalProps> = ({
                     <Text style={styles.bottomSheetTitle}>Device Calibration</Text>
 
                     <View style={styles.bottomSheetContent}>
-                        <MaterialCommunityIcons
-                            name={"elevator-down"}
-                            size={48}
-                            color="#6544C0"
-                        />
+                        <PlaceDeviceAnimation />
 
                         <Text style={styles.bottomSheetText}>
                             Place the sensor on a flat, stable surface with the display facing up
@@ -311,5 +348,7 @@ const styles = StyleSheet.create({
         gap: 8,
         width: '100%',
     },
-
+    animationContainer: {
+        padding: 20,
+    },
 });
