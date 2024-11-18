@@ -146,19 +146,19 @@ const PlaceDeviceAnimation = () => {
             {
                 translateY: withRepeat(
                     withSequence(
-                        withTiming(-20, { duration: 1000 }),
-                        withTiming(0, { duration: 1000 })
+                        withTiming(-25, { duration: 1500 }),
+                        withTiming(0, { duration: 1500 }),
                     ),
-                    -1
+                    -1, true
                 )
             },
             {
                 rotateZ: withRepeat(
                     withSequence(
-                        withTiming('-10deg', { duration: 1000 }),
-                        withTiming('0deg', { duration: 1000 })
+                        withTiming('-30deg', { duration: 1500 }),
+                        withTiming('0deg', { duration: 1500 }),
                     ),
-                    -1
+                    -1, true
                 )
             }
         ]
