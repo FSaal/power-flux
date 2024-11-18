@@ -49,7 +49,7 @@ export default function TabLayout() {
                     title: 'History',
                     tabBarIcon: ({ color, focused }) => (
                         <MaterialCommunityIcons
-                            name={focused ? "chart-box" : "history"}  // Better represents historical data
+                            name={focused ? "history" : "history"}  // Better represents historical data
                             color={color}
                             size={24}
                         />
