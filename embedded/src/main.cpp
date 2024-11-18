@@ -3,205 +3,256 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <memory>
 #include "SetupCalibration.h"
+#include "DisplayController.h"
 
 // Device Configuration
-static const char DEVICE_NAME[] = "PowerFlux";
-static const char SERVICE_UUID[] = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-static const char CHAR_ACC_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-static const char CHAR_GYR_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
-static const char CHAR_CALIB_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
+static constexpr char DEVICE_NAME[] = "PowerFlux";
+static constexpr char SERVICE_UUID[] = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+static constexpr char CHAR_ACC_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+static constexpr char CHAR_GYR_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
+static constexpr char CHAR_CALIB_UUID[] = "beb5483e-36e1-4688-b7f5-ea07361b26aa";
 
-// Global variables needed across multiple classes
-BLEServer *pServer = nullptr;
-BLECharacteristic *pAccCharacteristic = nullptr;
-BLECharacteristic *pGyrCharacteristic = nullptr;
-BLECharacteristic *pCalibCharacteristic = nullptr;
+// Global state
+std::unique_ptr<BLEServer> pServer;
+std::unique_ptr<BLECharacteristic> pAccCharacteristic;
+std::unique_ptr<BLECharacteristic> pGyrCharacteristic;
+std::unique_ptr<BLECharacteristic> pCalibCharacteristic;
+std::unique_ptr<SetupCalibration> setupCalibration;
 bool deviceConnected = false;
-SetupCalibration *setupCalibration = nullptr;
+bool initialDisplayShown = false;
+DisplayController display;
 
-// Data packet structures for BLE transmission
-struct __attribute__((packed)) AccPacket
+struct __attribute__((packed)) SensorPacket
 {
-  float accX;
-  float accY;
-  float accZ;
+  float x;
+  float y;
+  float z;
   uint32_t timestamp;
-}; // 16 bytes
-
-struct __attribute__((packed)) GyrPacket
-{
-  float gyrX;
-  float gyrY;
-  float gyrZ;
-  uint32_t timestamp;
-}; // 16 bytes
-
-// Commands from app
-enum CalibrationCommand
-{
-  CMD_START_CALIBRATION = 1,
-  CMD_ABORT_CALIBRATION = 2
 };
 
-// Forward declare classes we'll use
-class ServerCallbacks;
-
-// Define ServerCallbacks class
-class ServerCallbacks : public BLEServerCallbacks
+enum class CalibrationCommand : uint8_t
 {
-public:
-  static BLEServer *connectedDevice;
-
-  void onConnect(BLEServer *pServer) override
-  {
-    deviceConnected = true;
-    connectedDevice = pServer;
-
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.println("Connected!");
-    Serial.println("Device connected");
-  }
-
-  void onDisconnect(BLEServer *pServer) override
-  {
-    deviceConnected = false;
-    connectedDevice = nullptr;
-
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.println("Disconnected!");
-    Serial.println("Device disconnected");
-
-    // Restart advertising
-    pServer->getAdvertising()->start();
-  }
+  START = 1,
+  ABORT = 2
 };
 
-// Define the static member
-BLEServer *ServerCallbacks::connectedDevice = nullptr;
-
-// Callback handler for calibration commands
 class CalibrationCallback : public BLECharacteristicCallbacks
 {
   void onWrite(BLECharacteristic *pCharacteristic) override
   {
-    uint8_t *data = pCharacteristic->getData();
-    if (data)
+    if (!pCharacteristic || !pCharacteristic->getData())
+      return;
+
+    auto cmd = static_cast<CalibrationCommand>(pCharacteristic->getData()[0]);
+
+    if (!setupCalibration)
+      return;
+
+    switch (cmd)
     {
-      switch (data[0])
-      {
-      case CMD_START_CALIBRATION:
-        if (setupCalibration)
-          setupCalibration->startCalibration();
-        break;
-      case CMD_ABORT_CALIBRATION:
-        if (setupCalibration)
-          setupCalibration->abortCalibration();
-        break;
-      }
+    case CalibrationCommand::START:
+      setupCalibration->startCalibration();
+      break;
+    case CalibrationCommand::ABORT:
+      setupCalibration->abortCalibration();
+      break;
     }
   }
 };
 
+class ServerCallbacks : public BLEServerCallbacks
+{
+  void onConnect(BLEServer *server) override
+  {
+    deviceConnected = true;
+  }
+
+  void onDisconnect(BLEServer *server) override
+  {
+    deviceConnected = false;
+    server->startAdvertising();
+  }
+};
+
+bool initBLE()
+{
+  static constexpr const char *LOG_TAG = "[BLE_INIT]";
+  try
+  {
+    // Initialize BLE device
+    BLEDevice::init(DEVICE_NAME);
+    Serial.printf("%s Device initialized as %s\n", LOG_TAG, DEVICE_NAME);
+
+    // Create BLE server
+    pServer.reset(BLEDevice::createServer());
+    if (!pServer)
+    {
+      Serial.printf("%s Failed to create server\n", LOG_TAG);
+      return false;
+    }
+    pServer->setCallbacks(new ServerCallbacks());
+
+    // Create BLE service
+    auto *pService = pServer->createService(SERVICE_UUID);
+    if (!pService)
+    {
+      Serial.printf("%s Failed to create service\n", LOG_TAG);
+      return false;
+    }
+
+    // Create accelerometer characteristic
+    pAccCharacteristic.reset(pService->createCharacteristic(
+        CHAR_ACC_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY));
+    if (!pAccCharacteristic)
+    {
+      Serial.printf("%s Failed to create accelerometer characteristic\n", LOG_TAG);
+      return false;
+    }
+    pAccCharacteristic->addDescriptor(new BLE2902());
+    Serial.printf("%s Accelerometer characteristic created\n", LOG_TAG);
+
+    // Create gyroscope characteristic
+    pGyrCharacteristic.reset(pService->createCharacteristic(
+        CHAR_GYR_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY));
+    if (!pGyrCharacteristic)
+    {
+      Serial.printf("%s Failed to create gyroscope characteristic\n", LOG_TAG);
+      return false;
+    }
+    pGyrCharacteristic->addDescriptor(new BLE2902());
+    Serial.printf("%s Gyroscope characteristic created\n", LOG_TAG);
+
+    // Create calibration characteristic
+    pCalibCharacteristic.reset(pService->createCharacteristic(
+        CHAR_CALIB_UUID,
+        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY));
+    if (!pCalibCharacteristic)
+    {
+      Serial.printf("%s Failed to create calibration characteristic\n", LOG_TAG);
+      return false;
+    }
+    pCalibCharacteristic->addDescriptor(new BLE2902());
+    pCalibCharacteristic->setCallbacks(new CalibrationCallback());
+
+    // Initialize calibration handler
+    setupCalibration.reset(new SetupCalibration(pCalibCharacteristic.get(), display));
+    if (!setupCalibration)
+    {
+      Serial.printf("%s Failed to initialize calibration handler\n", LOG_TAG);
+      return false;
+    }
+
+    // Start service and advertising
+    pService->start();
+    pServer->getAdvertising()->start();
+
+    return true;
+  }
+  catch (const std::exception &e)
+  {
+    Serial.printf("%s Exception during initialization: %s\n", LOG_TAG, e.what());
+    return false;
+  }
+  catch (...)
+  {
+    Serial.printf("%s Unknown exception during initialization\n", LOG_TAG);
+    return false;
+  }
+}
 void setup()
 {
-  // Initialize M5Stack
   M5.begin();
+  display.begin();
   Serial.begin(115200);
-  M5.Lcd.setRotation(3);
-  M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.setTextSize(2);
-  M5.Lcd.setCursor(0, 0);
-  M5.Lcd.println("PowerFlux!!!");
 
-  M5.Imu.begin();
+  if (!M5.Imu.begin())
+  {
+    Serial.println("[IMU] IMU initialization failed");
+    M5.Lcd.println("[IMU] IMU initialization failed");
+    while (true)
+    {
+      delay(1000); // Halt execution
+    }
+  }
 
-  // Initialize BLE
-  BLEDevice::init(DEVICE_NAME);
-  pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new ServerCallbacks());
+  if (!initBLE())
+  {
+    Serial.println("[BLE] BLE initialization failed");
+    M5.Lcd.println("[IMU] BLE initialization failed");
+    while (true)
+    {
+      delay(1000); // Halt execution
+    }
+  }
 
-  // Create BLE Service
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // Create BLE Characteristics
-  pAccCharacteristic = pService->createCharacteristic(
-      CHAR_ACC_UUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  pAccCharacteristic->addDescriptor(new BLE2902());
-
-  pGyrCharacteristic = pService->createCharacteristic(
-      CHAR_GYR_UUID,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
-  pGyrCharacteristic->addDescriptor(new BLE2902());
-
-  // Add calibration characteristic
-  pCalibCharacteristic = pService->createCharacteristic(
-      CHAR_CALIB_UUID,
-      BLECharacteristic::PROPERTY_READ |
-          BLECharacteristic::PROPERTY_WRITE |
-          BLECharacteristic::PROPERTY_NOTIFY);
-  pCalibCharacteristic->addDescriptor(new BLE2902());
-  pCalibCharacteristic->setCallbacks(new CalibrationCallback());
-
-  // Initialize calibration system
-  setupCalibration = new SetupCalibration(pCalibCharacteristic);
-
-  // Start the service
-  pService->start();
-
-  // Start advertising
-  BLEAdvertising *pAdvertising = pServer->getAdvertising();
-  pAdvertising->start();
+  Serial.println("[SETUP] All components initialized");
 }
 
 void loop()
 {
+  static uint32_t lastConnectionCheck = 0;
   static uint32_t lastUpdate = 0;
-  const uint32_t UPDATE_INTERVAL = 200; // 5Hz update rate
+  static bool lastConnectionState = false;
+  static constexpr uint32_t CONNECTION_CHECK_INTERVAL = 1000; // 1 Hz check rate
+  static constexpr uint32_t UPDATE_INTERVAL = 100;            // 10 Hz update rate
+  static constexpr uint32_t DELAY_MS = 5;                     // Loop delay in ms
 
-  // Process calibration if in progress
+  // Update button states and handle display timeout
+  display.update();
+  const uint32_t currentTime = millis();
+
+  // Ensure initial display state is shown at start
+  if (!initialDisplayShown)
+  {
+    display.updateStatus(false, false);
+    initialDisplayShown = true;
+  }
+
+  // Periodically verify connection state and update display
+  if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL)
+  {
+    bool connectionState = pServer && pServer->getConnectedCount() > 0;
+    if (lastConnectionState != connectionState)
+    {
+      Serial.printf("[BLE] Connection state changed to %s\n", connectionState ? "connected" : "disconnected");
+      deviceConnected = connectionState;
+      lastConnectionState = connectionState;
+      display.wakeDisplay();
+      display.updateStatus(deviceConnected, false);
+    }
+    lastConnectionCheck = currentTime;
+  }
+
+  // Handle calibration process
   if (setupCalibration && setupCalibration->isCalibrationInProgress())
   {
     setupCalibration->processCalibration();
     delay(10);
-    return; // Skip sensor data sending during calibration
+    return;
   }
 
-  if (millis() - lastUpdate >= UPDATE_INTERVAL)
+  // Process sensor data
+  if (currentTime - lastUpdate >= UPDATE_INTERVAL && deviceConnected)
   {
-    float accX, accY, accZ;
-    float gyrX, gyrY, gyrZ;
-    uint32_t currentTime = millis();
+    float ax{}, ay{}, az{}, gx{}, gy{}, gz{};
+    M5.Imu.getAccelData(&ax, &ay, &az);
+    M5.Imu.getGyroData(&gx, &gy, &gz);
 
-    M5.Imu.getAccelData(&accX, &accY, &accZ);
-    M5.Imu.getGyroData(&gyrX, &gyrY, &gyrZ);
+    // Send accelerometer data*
+    SensorPacket accPacket{ax, ay, az, currentTime};
+    pAccCharacteristic->setValue(reinterpret_cast<uint8_t *>(&accPacket), sizeof(SensorPacket));
+    pAccCharacteristic->notify();
+    // Send gyroscope data*
+    SensorPacket gyrPacket{gx, gy, gz, currentTime};
+    pGyrCharacteristic->setValue(reinterpret_cast<uint8_t *>(&gyrPacket), sizeof(SensorPacket));
+    pGyrCharacteristic->notify();
 
-    if (deviceConnected)
-    {
-      // Send accelerometer data
-      AccPacket accPacket = {
-          .accX = accX,
-          .accY = accY,
-          .accZ = accZ,
-          .timestamp = currentTime};
-      pAccCharacteristic->setValue((uint8_t *)&accPacket, sizeof(AccPacket));
-      pAccCharacteristic->notify();
-
-      // Send gyroscope data
-      GyrPacket gyrPacket = {
-          .gyrX = gyrX,
-          .gyrY = gyrY,
-          .gyrZ = gyrZ,
-          .timestamp = currentTime};
-      pGyrCharacteristic->setValue((uint8_t *)&gyrPacket, sizeof(GyrPacket));
-      pGyrCharacteristic->notify();
-    }
-
-    lastUpdate = millis();
+    lastUpdate = currentTime;
   }
 
-  delay(10);
+  delay(DELAY_MS);
 }

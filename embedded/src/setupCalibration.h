@@ -1,17 +1,22 @@
 #pragma once
 #include <M5StickCPlus2.h>
 #include <BLECharacteristic.h>
+#include <displayController.h>
+#include <memory>
+#include <array>
+
+extern bool deviceConnected;
 
 struct Vector3D
 {
     float x, y, z;
 
-    Vector3D operator+(const Vector3D &other) const
+    Vector3D operator+(const Vector3D &other) const noexcept
     {
         return {x + other.x, y + other.y, z + other.z};
     }
 
-    Vector3D operator/(float scalar) const
+    Vector3D operator/(float scalar) const noexcept
     {
         return {x / scalar, y / scalar, z / scalar};
     }
@@ -19,46 +24,51 @@ struct Vector3D
 
 struct CalibrationData
 {
-    Vector3D accelBias;  // Offset correction
-    Vector3D gyroBias;   // Offset correction
-    Vector3D accelScale; // Scale factors
-    Vector3D gyroScale;  // Scale factors
-    float tempReference; // Temperature at calibration time
-    bool isCalibrated;   // Calibration status flag
-    uint32_t timestamp;  // When calibration was performed
+    Vector3D accelBias;
+    Vector3D gyroBias;
+    Vector3D accelScale;
+    Vector3D gyroScale;
+    float tempReference;
+    bool isCalibrated;
+    uint32_t timestamp;
 };
 
 class SetupCalibration
 {
 public:
-    SetupCalibration(BLECharacteristic *calibChar);
+    explicit SetupCalibration(BLECharacteristic *calibChar, DisplayController &disp) noexcept;
+    ~SetupCalibration() = default;
+
+    SetupCalibration(const SetupCalibration &) = delete;
+    SetupCalibration &operator=(const SetupCalibration &) = delete;
+    SetupCalibration(SetupCalibration &&) = delete;
+    SetupCalibration &operator=(SetupCalibration &&) = delete;
 
     void startCalibration();
-    void abortCalibration();
+    void abortCalibration() noexcept;
     void processCalibration();
-
-    bool isCalibrationInProgress() const { return calibrationInProgress; }
+    [[nodiscard]] bool isCalibrationInProgress() const noexcept { return calibrationInProgress; }
+    [[nodiscard]] CalibrationData getCalibrationData() const noexcept;
+    [[nodiscard]] bool hasCalibrationData() const noexcept { return calibData.isCalibrated; }
 
 private:
-    // Constants
-    static const uint16_t SAMPLES_REQUIRED = 200;   // Number of samples for calibration
-    static const uint16_t STABILITY_THRESHOLD = 10; // Samples needed for stability
+    DisplayController &display;
+    static constexpr uint16_t SAMPLES_REQUIRED = 200;
+    static constexpr uint16_t STABILITY_THRESHOLD = 10;
 
     BLECharacteristic *pCalibCharacteristic;
     bool calibrationInProgress;
     uint16_t sampleCount;
 
-    // Calibration data storage
     CalibrationData calibData;
-    Vector3D *accelSamples;
-    Vector3D *gyroSamples;
+    std::unique_ptr<Vector3D[]> accelSamples;
+    std::unique_ptr<Vector3D[]> gyroSamples;
 
-    bool checkStability();
     void collectSample();
-    void calculateCalibration();
-    void updateStatus(uint8_t status);
+    void calculateCalibration() noexcept;
+    void updateStatus(uint8_t status) noexcept;
 
     // Statistical methods
-    Vector3D calculateMean(Vector3D *samples, uint16_t count);
-    Vector3D calculateStdDev(Vector3D *samples, uint16_t count, const Vector3D &mean);
+    [[nodiscard]] Vector3D calculateMean(const Vector3D *samples, uint16_t count) const noexcept;
+    [[nodiscard]] Vector3D calculateStdDev(const Vector3D *samples, uint16_t count, const Vector3D &mean) const noexcept;
 };
