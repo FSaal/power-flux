@@ -1,3 +1,4 @@
+import DeleteConfirmation from '@/components/delete_confirmation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -154,6 +155,8 @@ export default function HistoryScreen() {
     const [sessions, setSessions] = useState<ISession[]>([]);
     const [refreshing, setRefreshing] = useState(false);
     const [selectedSession, setSelectedSession] = useState<ISession | null>(null);
+    const [showDeleteConfirmation, setShowDeleteConfirmation] = useState(false);
+    const [sessionToDelete, setSessionToDelete] = useState<ISession | null>(null);
 
     const loadSessions = async () => {
         try {
@@ -179,7 +182,7 @@ export default function HistoryScreen() {
         try {
             await dbService.updateSession(sessionId, updates);
             await loadSessions();
-            Alert.alert('Success', 'Session updated successfully');
+            console.log('Session updated successfully');
         } catch (error) {
             console.error('Error updating session:', error);
             Alert.alert('Error', 'Failed to update session');
@@ -187,28 +190,23 @@ export default function HistoryScreen() {
     };
 
     const handleDeleteSession = async (session: ISession) => {
-        Alert.alert(
-            'Delete Session',
-            'Are you sure you want to delete this session? This action cannot be undone.',
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Delete',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            // Note: You'll need to add this method to your dbService
-                            await dbService.deleteSession(session.id);
-                            await loadSessions();
-                            setSelectedSession(null);
-                        } catch (error) {
-                            console.error('Error deleting session:', error);
-                            Alert.alert('Error', 'Failed to delete session');
-                        }
-                    }
-                }
-            ]
-        );
+        setSessionToDelete(session);
+        setShowDeleteConfirmation(true);
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!sessionToDelete) return;
+
+        try {
+            await dbService.deleteSession(sessionToDelete.id);
+            await loadSessions();
+            setSelectedSession(null);
+            setShowDeleteConfirmation(false);
+            setSessionToDelete(null);
+        } catch (error) {
+            console.error('Error deleting session:', error);
+            Alert.alert('Error', 'Failed to delete session');
+        }
     };
 
     const handleExportSession = async (session: ISession) => {
@@ -302,7 +300,14 @@ export default function HistoryScreen() {
                         />
                     </View>
                 )}
+                <DeleteConfirmation
+                    isVisible={showDeleteConfirmation}
+                    onConfirm={handleConfirmDelete}
+                    onCancel={() => setShowDeleteConfirmation(false)}
+                    message="This action cannot be undone. All session data will be permanently deleted."
+                />
             </Modal>
+
         </View>
     );
 }
