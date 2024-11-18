@@ -114,6 +114,7 @@ class DatabaseService {
     async storeMeasurement(measurement: IMeasurement): Promise<void> {
         await this.ensureDbInitialized();
         try {
+            // Log start of storage operation
             console.log('Starting measurement storage for session:', measurement.sessionId);
 
             // Check if the session exists
@@ -123,23 +124,22 @@ class DatabaseService {
             );
             console.log('Session exists check:', sessionExists);
 
-            await this.db!.withTransactionAsync(async () => {
-                const result = await this.db!.runAsync(
-                    `INSERT INTO measurements (accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp, sessionId) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                    [
-                        measurement.accX,
-                        measurement.accY,
-                        measurement.accZ,
-                        measurement.gyrX,
-                        measurement.gyrY,
-                        measurement.gyrZ,
-                        measurement.timestamp,
-                        measurement.sessionId
-                    ]
-                );
-                console.log('Insert result:', result);
-            });
+            // Use a single transaction for the insert
+            const result = await this.db!.runAsync(
+                `INSERT INTO measurements (accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp, sessionId) 
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    measurement.accX,
+                    measurement.accY,
+                    measurement.accZ,
+                    measurement.gyrX,
+                    measurement.gyrY,
+                    measurement.gyrZ,
+                    measurement.timestamp,
+                    measurement.sessionId
+                ]
+            );
+            console.log('Insert result:', result);
 
             // Verify storage
             const count = await this.db!.getFirstAsync<{ count: number }>(
