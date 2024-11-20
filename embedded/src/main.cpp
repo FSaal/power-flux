@@ -46,6 +46,7 @@ class CalibrationCallback : public BLECharacteristicCallbacks
       return;
 
     auto cmd = static_cast<CalibrationCommand>(pCharacteristic->getData()[0]);
+    Serial.printf("[CALIB] Received command: %d\n", static_cast<int>(cmd));
 
     if (!setupCalibration)
       return;
@@ -53,9 +54,11 @@ class CalibrationCallback : public BLECharacteristicCallbacks
     switch (cmd)
     {
     case CalibrationCommand::START:
+      Serial.println("[CALIB] Starting calibration");
       setupCalibration->startCalibration();
       break;
     case CalibrationCommand::ABORT:
+      Serial.println("[CALIB] Aborting calibration");
       setupCalibration->abortCalibration();
       break;
     }
@@ -129,7 +132,9 @@ bool initBLE()
     // Create calibration characteristic
     pCalibCharacteristic.reset(pService->createCharacteristic(
         CHAR_CALIB_UUID,
-        BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY));
+        BLECharacteristic::PROPERTY_READ |
+            BLECharacteristic::PROPERTY_WRITE |
+            BLECharacteristic::PROPERTY_NOTIFY));
     if (!pCalibCharacteristic)
     {
       Serial.printf("%s Failed to create calibration characteristic\n", LOG_TAG);
@@ -137,6 +142,7 @@ bool initBLE()
     }
     pCalibCharacteristic->addDescriptor(new BLE2902());
     pCalibCharacteristic->setCallbacks(new CalibrationCallback());
+    Serial.printf("%s Calibration characteristic created\n", LOG_TAG);
 
     // Initialize calibration handler
     setupCalibration.reset(new SetupCalibration(pCalibCharacteristic.get(), display));
@@ -145,6 +151,8 @@ bool initBLE()
       Serial.printf("%s Failed to initialize calibration handler\n", LOG_TAG);
       return false;
     }
+
+    // ... rest of initialization code ...
 
     // Start service and advertising
     pService->start();
@@ -198,7 +206,7 @@ void loop()
   static uint32_t lastUpdate = 0;
   static bool lastConnectionState = false;
   static constexpr uint32_t CONNECTION_CHECK_INTERVAL = 1000; // 1 Hz check rate
-  static constexpr uint32_t UPDATE_INTERVAL = 100;            // 10 Hz update rate
+  static constexpr uint32_t UPDATE_INTERVAL = 20;             // 50 Hz update rate
   static constexpr uint32_t DELAY_MS = 5;                     // Loop delay in ms
 
   // Update button states and handle display timeout
