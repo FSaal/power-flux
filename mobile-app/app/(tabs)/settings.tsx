@@ -1,19 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Alert, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import Animated, {
-    useAnimatedStyle,
-    withRepeat,
-    withSequence,
-    withTiming,
-} from 'react-native-reanimated';
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { CalibrationModal } from '../../components/calibration_modal';
 import { useBLE } from '../../services/BLEContext';
-
-interface CalibrationModalProps {
-    visible: boolean;
-    onClose: () => void;
-    onStartCalibration: () => void;
-}
 
 export default function SettingsScreen() {
     const {
@@ -22,18 +11,52 @@ export default function SettingsScreen() {
         startScan,
         disconnect,
         calibrationState,
-        startCalibration,
+        setCalibrationState,
+        startQuickCalibration,
+        startFullCalibration,
         abortCalibration
     } = useBLE();
 
     const [showCalibrationModal, setShowCalibrationModal] = useState(false);
+    const [calibrationType, setCalibrationType] = useState<"quick" | "full">("quick");
 
-    const handleStartCalibration = async () => {
+    // Handle starting calibration process
+    const handleStartCalibration = async (type: 'quick' | 'full') => {
         if (!isConnected) {
             Alert.alert('Error', 'Please connect to device first');
             return;
         }
-        setShowCalibrationModal(true);
+        try {
+            setCalibrationType(type);
+            // Reset state before showing modal
+            setCalibrationState({
+                isCalibrating: false,
+                status: 'idle',
+                type: 'none',
+                progress: 0
+            });
+            setShowCalibrationModal(true);
+        } catch (error) {
+            const errorMessage = error instanceof Error ?
+                error.message : 'Failed to start calibration';
+            Alert.alert('Calibration Error', errorMessage);
+            console.error('Calibration error:', error);
+            setShowCalibrationModal(false);
+        }
+    };
+
+    // Handle modal close
+    const handleModalClose = () => {
+        if (!calibrationState.isCalibrating) {
+            setShowCalibrationModal(false);
+            // Reset ALL calibration state when modal is closed
+            setCalibrationState({
+                isCalibrating: false,
+                status: 'idle',
+                type: 'none',
+                progress: 0
+            });
+        }
     };
 
     return (
@@ -85,151 +108,48 @@ export default function SettingsScreen() {
                 )}
             </View>
 
-            {/* Calibration Card */}
-            <View style={styles.card}>
-                <View style={styles.cardHeader}>
-                    <MaterialCommunityIcons
-                        name="tune-vertical"
-                        size={24}
-                        color="#FFFFFF"
-                    />
-                    <Text style={styles.cardTitle}>Device Calibration</Text>
-                </View>
-                <Text style={styles.statusText}>
-                    Status: {calibrationState.status.replace('_', ' ')}
-                </Text>
+            {/* Quick Calibration Button */}
+            <TouchableOpacity
+                style={[
+                    styles.button,
+                    styles.calibrateButton,
+                    !isConnected && styles.buttonDisabled
+                ]}
+                onPress={() => handleStartCalibration('quick')}
+                disabled={!isConnected}
+            >
+                <MaterialCommunityIcons name="tune" size={24} color="white" />
+                <Text style={styles.buttonText}>Quick Calibrate</Text>
+            </TouchableOpacity>
 
-                {calibrationState.isCalibrating ? (
-                    <TouchableOpacity
-                        style={[styles.button, styles.abortButton]}
-                        onPress={abortCalibration}
-                    >
-                        <MaterialCommunityIcons
-                            name="close-circle"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>Abort Calibration</Text>
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity
-                        style={[
-                            styles.button,
-                            styles.calibrateButton,
-                            !isConnected && styles.buttonDisabled
-                        ]}
-                        onPress={handleStartCalibration}
-                        disabled={!isConnected}
-                    >
-                        <MaterialCommunityIcons
-                            name="tune"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>Start Calibration</Text>
-                    </TouchableOpacity>
-                )}
-            </View>
+            {/* Full Calibration Button */}
+            <TouchableOpacity
+                style={[
+                    styles.button,
+                    styles.fullCalibrateButton,
+                    !isConnected && styles.buttonDisabled
+                ]}
+                onPress={() => handleStartCalibration('full')}
+                disabled={!isConnected}
+            >
+                <MaterialCommunityIcons name="tune" size={24} color="white" />
+                <Text style={styles.buttonText}>Full Calibrate</Text>
+            </TouchableOpacity>
 
+            {/* Calibration Modal */}
             <CalibrationModal
                 visible={showCalibrationModal}
-                onClose={() => setShowCalibrationModal(false)}
-                onStartCalibration={startCalibration}
+                onClose={handleModalClose}
+                type={calibrationType}
+                startQuickCalibration={startQuickCalibration}
+                startFullCalibration={startFullCalibration}
+                calibrationState={calibrationState}
+                onAbort={abortCalibration}
             />
         </View>
     );
 }
 
-const PlaceDeviceAnimation = () => {
-    const animatedStyle = useAnimatedStyle(() => ({
-        transform: [
-            {
-                translateY: withRepeat(
-                    withSequence(
-                        withTiming(-25, { duration: 1500 }),
-                        withTiming(0, { duration: 1500 }),
-                    ),
-                    -1, true
-                )
-            },
-            {
-                rotateZ: withRepeat(
-                    withSequence(
-                        withTiming('-30deg', { duration: 1500 }),
-                        withTiming('0deg', { duration: 1500 }),
-                    ),
-                    -1, true
-                )
-            }
-        ]
-    }));
-
-    return (
-        <Animated.View style={[styles.animationContainer, animatedStyle]}>
-            <MaterialCommunityIcons
-                name="cellphone-text"
-                size={48}
-                color="#6544C0"
-            />
-        </Animated.View>
-    );
-};
-
-const CalibrationModal: React.FC<CalibrationModalProps> = ({
-    visible,
-    onClose,
-    onStartCalibration
-}) => {
-    return (
-        <Modal
-            animationType="slide"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
-        >
-            <TouchableOpacity
-                style={styles.modalOverlay}
-                activeOpacity={1}
-                onPress={onClose}
-            >
-                <View
-                    style={styles.bottomSheetContainer}
-                    onStartShouldSetResponder={() => true}
-                    onResponderRelease={(evt) => {
-                        evt.stopPropagation();
-                    }}
-                >
-                    <View style={styles.bottomSheetHandle} />
-
-                    <Text style={styles.bottomSheetTitle}>Device Calibration</Text>
-
-                    <View style={styles.bottomSheetContent}>
-                        <PlaceDeviceAnimation />
-
-                        <Text style={styles.bottomSheetText}>
-                            Place the sensor on a flat, stable surface with the display facing up
-                        </Text>
-
-                        <TouchableOpacity
-                            style={styles.calibrateButton}
-                            onPress={() => {
-                                onStartCalibration();
-                                onClose();
-                            }}
-                        >
-                            <MaterialCommunityIcons
-                                name="tune"
-                                size={24}
-                                color="white"
-                            />
-                            <Text style={styles.buttonText}>Start Calibration</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </TouchableOpacity>
-        </Modal>
-    );
-};
 
 const styles = StyleSheet.create({
     container: {
@@ -265,7 +185,10 @@ const styles = StyleSheet.create({
         textTransform: 'capitalize',
     },
     buttonContainer: {
+        flexDirection: 'row',
         gap: 12,
+        width: '100%',
+        justifyContent: 'space-between',
     },
     button: {
         flexDirection: 'row',
@@ -282,9 +205,6 @@ const styles = StyleSheet.create({
     disconnectButton: {
         backgroundColor: '#EF4444',
     },
-    abortButton: {
-        backgroundColor: '#EF4444',
-    },
     buttonText: {
         color: '#FFFFFF',
         fontSize: 16,
@@ -292,50 +212,6 @@ const styles = StyleSheet.create({
     },
     buttonDisabled: {
         opacity: 0.5,
-    },
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        justifyContent: 'flex-end',
-    },
-    bottomSheetContainer: {
-        backgroundColor: '#1F2937',
-        borderTopLeftRadius: 20,
-        borderTopRightRadius: 20,
-        padding: 20,
-        minHeight: 300,
-        elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: {
-            width: 0,
-            height: -2,
-        },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-    },
-    bottomSheetHandle: {
-        width: 40,
-        height: 4,
-        backgroundColor: '#6B7280',
-        borderRadius: 2,
-        alignSelf: 'center',
-        marginBottom: 20,
-    },
-    bottomSheetTitle: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        color: '#FFFFFF',
-        marginBottom: 20,
-    },
-    bottomSheetContent: {
-        alignItems: 'center',
-        gap: 24,
-    },
-    bottomSheetText: {
-        fontSize: 16,
-        color: '#9CA3AF',
-        textAlign: 'center',
-        lineHeight: 24,
     },
     calibrateButton: {
         flexDirection: 'row',
@@ -348,7 +224,7 @@ const styles = StyleSheet.create({
         gap: 8,
         width: '100%',
     },
-    animationContainer: {
-        padding: 20,
+    fullCalibrateButton: {
+        backgroundColor: '#8B5CF6',
     },
 });

@@ -21,8 +21,9 @@ std::unique_ptr<BLECharacteristic> pGyrCharacteristic;
 std::unique_ptr<BLECharacteristic> pCalibCharacteristic;
 std::unique_ptr<SetupCalibration> setupCalibration;
 bool deviceConnected = false;
+bool connectionChanged = false;
 bool initialDisplayShown = false;
-DisplayController display;
+DisplayController deviceDisplay;
 
 struct __attribute__((packed)) SensorPacket
 {
@@ -35,11 +36,21 @@ struct __attribute__((packed)) SensorPacket
 enum class CalibrationCommand : uint8_t
 {
   START = 1,
-  ABORT = 2
+  ABORT = 2,
+  START_FULL = 3,
+  START_QUICK = 4
 };
 
+/**
+ * Class handling callbacks for the BLE calibration characteristic.
+ */
 class CalibrationCallback : public BLECharacteristicCallbacks
 {
+  /**
+   * Called when the BLE calibration characteristic is written to.
+   *
+   * @param pCharacteristic The BLE characteristic that was written to.
+   */
   void onWrite(BLECharacteristic *pCharacteristic) override
   {
     if (!pCharacteristic || !pCharacteristic->getData())
@@ -57,6 +68,14 @@ class CalibrationCallback : public BLECharacteristicCallbacks
       Serial.println("[CALIB] Starting calibration");
       setupCalibration->startCalibration();
       break;
+    case CalibrationCommand::START_FULL:
+      Serial.println("[CALIB] Starting full calibration");
+      setupCalibration->startFullCalibration();
+      break;
+    case CalibrationCommand::START_QUICK:
+      Serial.println("[CALIB] Starting quick calibration");
+      setupCalibration->startQuickCalibration();
+      break;
     case CalibrationCommand::ABORT:
       Serial.println("[CALIB] Aborting calibration");
       setupCalibration->abortCalibration();
@@ -70,15 +89,21 @@ class ServerCallbacks : public BLEServerCallbacks
   void onConnect(BLEServer *server) override
   {
     deviceConnected = true;
+    connectionChanged = true;
   }
 
   void onDisconnect(BLEServer *server) override
   {
     deviceConnected = false;
+    connectionChanged = true;
     server->startAdvertising();
   }
 };
 
+/**
+ * @brief Initializes the BLE stack and advertises the device.
+ * @return True if initialization was successful, false otherwise.
+ */
 bool initBLE()
 {
   static constexpr const char *LOG_TAG = "[BLE_INIT]";
@@ -145,14 +170,12 @@ bool initBLE()
     Serial.printf("%s Calibration characteristic created\n", LOG_TAG);
 
     // Initialize calibration handler
-    setupCalibration.reset(new SetupCalibration(pCalibCharacteristic.get(), display));
+    setupCalibration.reset(new SetupCalibration(pCalibCharacteristic.get(), deviceDisplay));
     if (!setupCalibration)
     {
       Serial.printf("%s Failed to initialize calibration handler\n", LOG_TAG);
       return false;
     }
-
-    // ... rest of initialization code ...
 
     // Start service and advertising
     pService->start();
@@ -171,68 +194,60 @@ bool initBLE()
     return false;
   }
 }
+
 void setup()
 {
+  Serial.begin(115200); // Initialize serial for debugging
+  delay(1500);          // Give a moment for the serial monitor to open
   M5.begin();
-  display.begin();
-  Serial.begin(115200);
+  deviceDisplay.begin();
 
+  // Initialize IMU
   if (!M5.Imu.begin())
   {
-    Serial.println("[IMU] IMU initialization failed");
-    M5.Lcd.println("[IMU] IMU initialization failed");
+    Serial.println("[SETUP] IMU initialization failed");
     while (true)
-    {
-      delay(1000); // Halt execution
-    }
+      delay(1000);
   }
+  Serial.println("[SETUP] IMU initialized");
 
+  // Initialize BLE
   if (!initBLE())
   {
-    Serial.println("[BLE] BLE initialization failed");
-    M5.Lcd.println("[IMU] BLE initialization failed");
+    Serial.println("[SETUP] BLE initialization failed");
     while (true)
-    {
-      delay(1000); // Halt execution
-    }
+      delay(1000);
   }
-
-  Serial.println("[SETUP] All components initialized");
+  Serial.println("[SETUP] BLE initialized");
+  delay(100);
 }
 
 void loop()
 {
   static uint32_t lastConnectionCheck = 0;
   static uint32_t lastUpdate = 0;
-  static bool lastConnectionState = false;
   static constexpr uint32_t CONNECTION_CHECK_INTERVAL = 1000; // 1 Hz check rate
   static constexpr uint32_t UPDATE_INTERVAL = 20;             // 50 Hz update rate
   static constexpr uint32_t DELAY_MS = 5;                     // Loop delay in ms
+  uint32_t currentTime = millis();                            // Time since startup in ms
 
   // Update button states and handle display timeout
-  display.update();
-  const uint32_t currentTime = millis();
+  deviceDisplay.update();
 
   // Ensure initial display state is shown at start
   if (!initialDisplayShown)
   {
-    display.updateStatus(false, false);
+    deviceDisplay.updateStatus(false, false);
     initialDisplayShown = true;
   }
 
-  // Periodically verify connection state and update display
-  if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL)
+  // Periodically verify connection state and update display on change
+  if (currentTime - lastConnectionCheck >= CONNECTION_CHECK_INTERVAL && connectionChanged)
   {
-    bool connectionState = pServer && pServer->getConnectedCount() > 0;
-    if (lastConnectionState != connectionState)
-    {
-      Serial.printf("[BLE] Connection state changed to %s\n", connectionState ? "connected" : "disconnected");
-      deviceConnected = connectionState;
-      lastConnectionState = connectionState;
-      display.wakeDisplay();
-      display.updateStatus(deviceConnected, false);
-    }
+    Serial.printf("[BLE] Connection state changed to %s\n", deviceConnected ? "connected" : "disconnected");
+    deviceDisplay.updateStatus(deviceConnected, false);
     lastConnectionCheck = currentTime;
+    connectionChanged = false;
   }
 
   // Handle calibration process
@@ -243,19 +258,33 @@ void loop()
     return;
   }
 
-  // Process sensor data
-  if (currentTime - lastUpdate >= UPDATE_INTERVAL && deviceConnected)
+  // Only process and send sensor data when connected to app
+  if (deviceConnected && currentTime - lastUpdate >= UPDATE_INTERVAL)
   {
-    float ax{}, ay{}, az{}, gx{}, gy{}, gz{};
-    M5.Imu.getAccelData(&ax, &ay, &az);
-    M5.Imu.getGyroData(&gx, &gy, &gz);
+    float temp;
+    Vector3D rawAccel, rawGyro;
 
-    // Send accelerometer data*
-    SensorPacket accPacket{ax, ay, az, currentTime};
+    M5.Imu.getAccelData(&rawAccel.x, &rawAccel.y, &rawAccel.z);
+    M5.Imu.getGyroData(&rawGyro.x, &rawGyro.y, &rawGyro.z);
+    M5.Imu.getTemp(&temp);
+    // Correct sensor data
+    CorrectedData corrected = setupCalibration->correctSensorData(rawAccel, rawGyro, temp);
+
+    // Send accelerometer data
+    SensorPacket accPacket{
+        corrected.accel.x,
+        corrected.accel.y,
+        corrected.accel.z,
+        currentTime};
     pAccCharacteristic->setValue(reinterpret_cast<uint8_t *>(&accPacket), sizeof(SensorPacket));
     pAccCharacteristic->notify();
-    // Send gyroscope data*
-    SensorPacket gyrPacket{gx, gy, gz, currentTime};
+
+    // Send gyroscope data
+    SensorPacket gyrPacket{
+        corrected.gyro.x,
+        corrected.gyro.y,
+        corrected.gyro.z,
+        currentTime};
     pGyrCharacteristic->setValue(reinterpret_cast<uint8_t *>(&gyrPacket), sizeof(SensorPacket));
     pGyrCharacteristic->notify();
 
