@@ -52,7 +52,7 @@ const SessionDetail: React.FC<SessionDetailProps> = ({
             <View style={styles.detailsContainer}>
                 <Text style={styles.detailLabel}>Date</Text>
                 <Text style={styles.detailValue}>
-                    {new Date(session.startTime).toLocaleString()}
+                    {new Date(session.startTime).toLocaleString("de-DE")}
                 </Text>
 
                 <Text style={styles.detailLabel}>Duration</Text>
@@ -243,7 +243,7 @@ export default function HistoryScreen() {
             <View style={styles.sessionHeader}>
                 <View>
                     <Text style={styles.sessionDate}>
-                        {new Date(item.startTime).toLocaleString()}
+                        {new Date(item.startTime).toLocaleString("de-DE")}
                     </Text>
                     {item.exerciseType && (
                         <Text style={styles.exerciseType}>{item.exerciseType}</Text>

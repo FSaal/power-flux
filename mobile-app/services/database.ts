@@ -188,7 +188,6 @@ class DatabaseService {
     async getSessionMeasurements(sessionId: string): Promise<IMeasurement[]> {
         await this.ensureDbInitialized();
         try {
-            console.log('Fetching measurements for session:', sessionId);
             const measurements = await this.db!.getAllAsync<IMeasurement>(
                 `SELECT * FROM measurements WHERE sessionId = ? ORDER BY timestamp ASC`,
                 [sessionId]
@@ -236,15 +235,10 @@ class DatabaseService {
 
     async exportSessionToJSON(sessionId: string): Promise<string> {
         try {
-            console.log('Starting JSON export for session:', sessionId);
             const [metadata, measurements] = await Promise.all([
                 this.getSessionMetaData(sessionId),
                 this.getSessionMeasurements(sessionId)
             ]);
-            console.log('Retrieved data for JSON:', {
-                hasMetadata: !!metadata,
-                measurementCount: measurements.length
-            });
 
             // Create JSON object
             const exportData = {
@@ -264,7 +258,6 @@ class DatabaseService {
                 }))
             };
             const jsonString = JSON.stringify(exportData);
-            console.log('JSON generated, first 100 chars:', jsonString.substring(0, 100));
             return jsonString;
         } catch (error) {
             console.error('Error in exportSessionToJSON:', error);
