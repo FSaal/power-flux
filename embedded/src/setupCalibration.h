@@ -73,7 +73,7 @@ struct __attribute__((packed)) CalibrationProgress
     uint8_t progress; // 0-100
     float temperature;
     uint8_t positionIndex;
-    uint8_t reserved;
+    uint8_t isPositionCorrect;
 };
 
 struct PositionData

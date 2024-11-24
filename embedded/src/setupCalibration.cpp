@@ -269,33 +269,74 @@ void SetupCalibration::handleBiasEstimation()
 void SetupCalibration::handlePositionCalibration()
 {
     size_t positionIndex = static_cast<size_t>(currentState) - static_cast<size_t>(CalibrationState::POSITION_Z_UP);
+    static bool positionValidated = false;
+    static uint32_t stablePositionStartTime = 0;
+    static constexpr uint32_t STABLE_POSITION_DURATION = 500; // 500ms of stable position required
 
-    if (sampleCount < SAMPLES_PER_STATE)
+    // Get current position data
+    Vector3D currentAccel;
+    M5.Imu.getAccelData(&currentAccel.x, &currentAccel.y, &currentAccel.z);
+    bool isCurrentPositionCorrect = validatePosition(currentAccel, positionIndex);
+
+    // Update position status via BLE
+    CalibrationProgress progress;
+    progress.state = currentState;
+    progress.progress = sampleCount * 100 / SAMPLES_PER_STATE;
+    progress.temperature = initialTemp;
+    progress.positionIndex = positionIndex;
+    progress.isPositionCorrect = isCurrentPositionCorrect ? 1 : 0;
+
+    if (pCalibCharacteristic)
     {
-        collectSample();
+        pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&progress), sizeof(CalibrationProgress));
+        pCalibCharacteristic->notify();
+    }
 
-        if (sampleCount % 100 == 0)
+    // Position validation state machine
+    if (!positionValidated)
+    {
+        if (isCurrentPositionCorrect)
         {
-            deviceDisplay.showCalibrationProgress(
-                static_cast<uint8_t>((sampleCount * 100) / SAMPLES_PER_STATE));
-        }
-
-        if (sampleCount % 10 == 0)
-        {
-            Vector3D currentAccel;
-            M5.Imu.getAccelData(&currentAccel.x, &currentAccel.y, &currentAccel.z);
-
-            if (!validatePosition(currentAccel, positionIndex))
+            if (stablePositionStartTime == 0)
             {
-                sampleCount = 0;
-                deviceDisplay.showCalibrationProgress(0);
-                return;
+                stablePositionStartTime = millis();
+            }
+            else if ((millis() - stablePositionStartTime) >= STABLE_POSITION_DURATION)
+            {
+                positionValidated = true;
+                sampleCount = 0; // Reset sample count to start measurements
+                Serial.printf("[CALIB] Position %d validated, starting measurements\n", positionIndex);
             }
         }
+        else
+        {
+            stablePositionStartTime = 0;
+        }
+        return; // Don't collect samples until position is validated
+    }
+
+    // Collect samples once position is validated
+    if (sampleCount < SAMPLES_PER_STATE)
+    {
+        // Check if position is still correct during measurement
+        if (!isCurrentPositionCorrect)
+        {
+            Serial.println("[CALIB] Position lost during measurement, restarting position");
+            sampleCount = 0;
+            positionValidated = false;
+            stablePositionStartTime = 0;
+            return;
+        }
+
+        collectSample();
+        updateProgress(static_cast<uint8_t>((sampleCount * 100) / SAMPLES_PER_STATE));
     }
     else
     {
+        // Position completed
         calculatePositionData(positionIndex);
+        positionValidated = false; // Reset for next position
+        stablePositionStartTime = 0;
 
         if (positionIndex < calibrationPositions.size() - 1)
         {
@@ -591,6 +632,18 @@ void SetupCalibration::transitionTo(CalibrationState newState)
     currentState = newState;
     stateStartTime = millis();
     sampleCount = 0;
+
+    // Add position logging
+    if (newState >= CalibrationState::POSITION_Z_UP &&
+        newState <= CalibrationState::POSITION_X_DOWN)
+    {
+        size_t positionIndex = static_cast<size_t>(newState) -
+                               static_cast<size_t>(CalibrationState::POSITION_Z_UP);
+        Serial.printf("[CALIB] Transitioning to position %d: %s\n",
+                      positionIndex,
+                      calibrationPositions[positionIndex].description);
+    }
+
     sendStatusToApp();
     deviceDisplay.showCalibrationProgress(0);
 }
@@ -611,7 +664,7 @@ void SetupCalibration::sendStatusToApp()
                                      currentState <= CalibrationState::POSITION_X_DOWN
                                  ? static_cast<uint8_t>(currentState) - static_cast<uint8_t>(CalibrationState::POSITION_Z_UP)
                                  : 0;
-    progress.reserved = 0;
+    // progress.reserved = 0;
 
     pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&progress), sizeof(CalibrationProgress));
     pCalibCharacteristic->notify();
@@ -635,7 +688,7 @@ void SetupCalibration::updateProgress(uint8_t progress)
                                          currentState <= CalibrationState::POSITION_X_DOWN
                                      ? static_cast<uint8_t>(currentState) - static_cast<uint8_t>(CalibrationState::POSITION_Z_UP)
                                      : 0;
-    statusUpdate.reserved = 0;
+    // statusUpdate.reserved = 0;
 
     pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&statusUpdate), sizeof(CalibrationProgress));
     pCalibCharacteristic->notify();
@@ -661,6 +714,17 @@ void SetupCalibration::startFullCalibration()
 
     try
     {
+        Vector3D currentAccel;
+        M5.Imu.getAccelData(&currentAccel.x, &currentAccel.y, &currentAccel.z);
+
+        // Check initial position (first position is Z_UP)
+        if (!validatePosition(currentAccel, 0))
+        {
+            Serial.println("[CALIB] Initial position incorrect - transitioning to POSITION_Z_UP state");
+            transitionTo(CalibrationState::POSITION_Z_UP);
+            return;
+        }
+
         accelSamples.reset(new Vector3D[SAMPLES_PER_STATE]);
         gyroSamples.reset(new Vector3D[SAMPLES_PER_STATE]);
         calibrationInProgress = true;

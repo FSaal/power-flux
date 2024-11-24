@@ -2,6 +2,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { CalibrationModal } from '../../components/calibration_modal';
+import { FullCalibrationModal } from '../../components/full_calibration_modal';
 import { useBLE } from '../../services/BLEContext';
 
 export default function SettingsScreen() {
@@ -14,10 +15,14 @@ export default function SettingsScreen() {
         setCalibrationState,
         startQuickCalibration,
         startFullCalibration,
-        abortCalibration
+        abortCalibration,
+        confirmCalibrationPosition,
+        isPositionCorrect,
+        sensorData
     } = useBLE();
 
     const [showCalibrationModal, setShowCalibrationModal] = useState(false);
+    const [showFullCalibrationModal, setShowFullCalibrationModal] = useState(false);
     const [calibrationType, setCalibrationType] = useState<"quick" | "full">("quick");
 
     // Handle starting calibration process
@@ -35,28 +40,40 @@ export default function SettingsScreen() {
                 type: 'none',
                 progress: 0
             });
-            setShowCalibrationModal(true);
+            if (type === 'quick') {
+                setShowCalibrationModal(true);
+            } else {
+                setShowFullCalibrationModal(true);
+            }
         } catch (error) {
             const errorMessage = error instanceof Error ?
                 error.message : 'Failed to start calibration';
             Alert.alert('Calibration Error', errorMessage);
             console.error('Calibration error:', error);
             setShowCalibrationModal(false);
+            setShowFullCalibrationModal(false);
         }
     };
 
     // Handle modal close
-    const handleModalClose = () => {
-        if (!calibrationState.isCalibrating) {
-            setShowCalibrationModal(false);
-            // Reset ALL calibration state when modal is closed
-            setCalibrationState({
-                isCalibrating: false,
-                status: 'idle',
-                type: 'none',
-                progress: 0
-            });
+    const handleModalClose = async () => {
+        if (calibrationState.isCalibrating) {
+            try {
+                await abortCalibration();
+            } catch (error) {
+                console.error('Error aborting calibration:', error);
+                Alert.alert('Error', 'Failed to abort calibration');
+            }
         }
+        setShowCalibrationModal(false);
+        setShowFullCalibrationModal(false);
+        // Reset calibration state
+        setCalibrationState({
+            isCalibrating: false,
+            status: 'idle',
+            type: 'none',
+            progress: 0
+        });
     };
 
     return (
@@ -136,7 +153,7 @@ export default function SettingsScreen() {
                 <Text style={styles.buttonText}>Full Calibrate</Text>
             </TouchableOpacity>
 
-            {/* Calibration Modal */}
+            {/* Quick Calibration Modal */}
             <CalibrationModal
                 visible={showCalibrationModal}
                 onClose={handleModalClose}
@@ -146,10 +163,40 @@ export default function SettingsScreen() {
                 calibrationState={calibrationState}
                 onAbort={abortCalibration}
             />
+
+            {/* Full Calibration Modal */}
+            <FullCalibrationModal
+                visible={showFullCalibrationModal}
+                onClose={handleModalClose}
+                onStartCalibration={startFullCalibration}
+                onConfirmPosition={async () => {
+                    try {
+                        await confirmCalibrationPosition();
+                    } catch (error) {
+                        console.error('Failed to confirm position:', error);
+                        Alert.alert('Error', 'Failed to confirm position');
+                    }
+                }}
+                onAbort={async () => {
+                    try {
+                        await abortCalibration();
+                        setShowFullCalibrationModal(false);
+                    } catch (error) {
+                        console.error('Failed to abort calibration:', error);
+                        Alert.alert('Error', 'Failed to abort calibration');
+                    }
+                }}
+                calibrationState={calibrationState}
+                currentRotation={sensorData ? {
+                    x: sensorData.accX,
+                    y: sensorData.accY,
+                    z: sensorData.accZ
+                } : undefined}
+                isPositionCorrect={isPositionCorrect}
+            />
         </View>
     );
 }
-
 
 const styles = StyleSheet.create({
     container: {

@@ -18,6 +18,12 @@ const CHAR_CALIB_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26aa';
 const DEVICE_NAME = 'PowerFlux';
 const SCAN_TIMEOUT = 10000; // 10 seconds
 
+interface Vector3D {
+    x: number;
+    y: number;
+    z: number;
+}
+
 /**
  * Represents a complete set of sensor data from both accelerometer and gyroscope
  */
@@ -45,7 +51,7 @@ export interface CalibrationProgress {
     progress: number;   // uint8_t
     temperature: number;// float
     positionIndex: number; // uint8_t
-    reserved: number;   // uint8_t
+    isPositionCorrect: number;   // uint8_t
 }
 
 export enum CalibrationCommand {
@@ -66,10 +72,12 @@ export interface BLEContextType {
     startQuickCalibration: () => Promise<void>;
     startFullCalibration: () => Promise<void>;
     abortCalibration: () => Promise<void>;
-    sensorData: SensorData | null;
     setOnDataReceived: (callback: ((data: SensorData) => void) | undefined) => void;
     onCalibrationProgress: (progress: CalibrationProgress) => void;
     setCalibrationState: React.Dispatch<React.SetStateAction<CalibrationState>>;
+    confirmCalibrationPosition: () => Promise<void>;
+    isPositionCorrect: boolean;
+    sensorData: SensorData | null;
 }
 
 
@@ -158,6 +166,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         type: 'none',
         progress: 0
     });
+    const [isPositionCorrect, setIsPositionCorrect] = useState(false);
 
     /**
      * Sets callback for handling received sensor data
@@ -178,18 +187,58 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             gyrX !== undefined && gyrY !== undefined && gyrZ !== undefined &&
             timestamp !== undefined) {
 
+            const accelData = { x: accX, y: accY, z: accZ };
+
+            if (calibrationState.isCalibrating) {
+                setIsPositionCorrect(checkPosition(accelData));
+            }
+
             const completeData: SensorData = {
                 accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp
             };
 
             setSensorData(completeData);
-
             if (dataCallbackRef.current) {
                 dataCallbackRef.current(completeData);
                 latestData.current = {}; // Clear latest data after processing
             }
         }
-    }, []);
+    }, [calibrationState.isCalibrating]);
+
+    const checkPosition = (accelData: Vector3D): boolean => {
+        const tolerance = 0.2;
+        const stateNum = parseInt(calibrationState.status);
+
+        // States 4-9 correspond to the position states in the C++ enum
+        switch (stateNum) {
+            case 4: // POSITION_Z_UP
+                return Math.abs(accelData.z - 1) < tolerance &&
+                    Math.abs(accelData.x) < tolerance &&
+                    Math.abs(accelData.y) < tolerance;
+            case 5: // POSITION_Z_DOWN
+                return Math.abs(accelData.z + 1) < tolerance &&
+                    Math.abs(accelData.x) < tolerance &&
+                    Math.abs(accelData.y) < tolerance;
+            case 6: // POSITION_Y_UP
+                return Math.abs(accelData.y - 1) < tolerance &&
+                    Math.abs(accelData.x) < tolerance &&
+                    Math.abs(accelData.z) < tolerance;
+            case 7: // POSITION_Y_DOWN
+                return Math.abs(accelData.y + 1) < tolerance &&
+                    Math.abs(accelData.x) < tolerance &&
+                    Math.abs(accelData.z) < tolerance;
+            case 8: // POSITION_X_UP
+                return Math.abs(accelData.x - 1) < tolerance &&
+                    Math.abs(accelData.y) < tolerance &&
+                    Math.abs(accelData.z) < tolerance;
+            case 9: // POSITION_X_DOWN
+                return Math.abs(accelData.x + 1) < tolerance &&
+                    Math.abs(accelData.y) < tolerance &&
+                    Math.abs(accelData.z) < tolerance;
+            default:
+                return false;
+        }
+    };
 
     /**
      * Initiates BLE device scanning
@@ -309,7 +358,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                                             progress: dataView.getUint8(1),
                                             temperature: dataView.getFloat32(2, true),
                                             positionIndex: dataView.getUint8(6),
-                                            reserved: dataView.getUint8(7)
+                                            isPositionCorrect: dataView.getUint8(7)
                                         };
 
                                         handleCalibrationProgress(progress);
@@ -486,18 +535,44 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
      * Handles calibration progress updates from device
      */
     const handleCalibrationProgress = useCallback((progress: CalibrationProgress) => {
-        setCalibrationState(prev => ({
-            ...prev,
-            isCalibrating: !([11, 12, 15].includes(progress.state)), // Not calibrating if completed, failed, or quick complete
-            status: progress.state === 15 ? 'completed' : // QUICK_COMPLETE
-                progress.state === 11 ? 'completed' : // COMPLETED (full calibration)
-                    progress.state === 12 ? 'failed' :    // FAILED
-                        progress.state === 0 ? 'idle' :      // IDLE
-                            'in_progress',
-            progress: progress.progress,
-            error: progress.state === 12 ? 'Calibration failed' : undefined,
-            type: prev.type // Maintain the current calibration type
-        }));
+        setCalibrationState(prev => {
+            const newState = {
+                ...prev,
+                isCalibrating: !([11, 12, 15].includes(progress.state)),
+                status: progress.state === 11 || progress.state === 15 ? 'completed' :
+                    progress.state === 12 ? 'failed' :
+                        'in_progress',
+                progress: progress.progress,
+                error: progress.state === 12 ? 'Calibration failed' : undefined,
+                type: prev.type
+            };
+
+            // Don't immediately reset the state - let the modal handle it
+            if (progress.state === 11 || progress.state === 12 || progress.state === 15) {
+                // Keep the completion/failure state visible until user interaction
+                return newState;
+            }
+
+            return newState;
+        });
+    }, []);
+
+    const confirmCalibrationPosition = useCallback(async () => {
+        try {
+            const device = await getConnectedDevice();
+            if (!device) throw new Error('No device connected');
+
+            const characteristic = await findCalibrationCharacteristic(device);
+            if (!characteristic) throw new Error('Calibration characteristic not found');
+
+            const command = new Uint8Array([5]); // CONFIRM_POSITION command
+            const base64Command = btoa(String.fromCharCode.apply(null, command));
+
+            await characteristic.writeWithResponse(base64Command);
+        } catch (error) {
+            Logger.error('Position confirmation error:', error);
+            throw error;
+        }
     }, []);
 
     return (
@@ -514,7 +589,9 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             startFullCalibration,
             abortCalibration,
             setOnDataReceived,
-            onCalibrationProgress: handleCalibrationProgress
+            onCalibrationProgress: handleCalibrationProgress,
+            confirmCalibrationPosition,
+            isPositionCorrect,
         }}>
             {children}
         </BLEContext.Provider>

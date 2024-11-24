@@ -38,7 +38,8 @@ enum class CalibrationCommand : uint8_t
   START = 1,
   ABORT = 2,
   START_FULL = 3,
-  START_QUICK = 4
+  START_QUICK = 4,
+  CONFIRM_POSITION = 5
 };
 
 /**
@@ -80,6 +81,11 @@ class CalibrationCallback : public BLECharacteristicCallbacks
       Serial.println("[CALIB] Aborting calibration");
       setupCalibration->abortCalibration();
       break;
+      // case CalibrationCommand::CONFIRM_POSITION:
+      //   Serial.println("[CALIB] Confirming position");
+      //   setupCalibration->handlePositionConfirm();
+      //   break;
+      //
     }
   }
 };
