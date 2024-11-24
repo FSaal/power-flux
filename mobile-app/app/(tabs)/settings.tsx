@@ -1,14 +1,30 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import Animated, {
+    Easing,
+    FadeIn,
+    FadeOut,
+    SlideInRight,
+    SlideOutRight,
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withSpring,
+    withTiming,
+} from 'react-native-reanimated';
 import { CalibrationModal } from '../../components/calibration_modal';
 import { useBLE } from '../../services/BLEContext';
+
+const AnimatedMaterialIcon = Animated.createAnimatedComponent(MaterialCommunityIcons);
 
 export default function SettingsScreen() {
     const {
         isConnected,
         isScanning,
         startScan,
+        stopScan,
         disconnect,
         calibrationState,
         setCalibrationState,
@@ -19,6 +35,45 @@ export default function SettingsScreen() {
 
     const [showCalibrationModal, setShowCalibrationModal] = useState(false);
     const [calibrationType, setCalibrationType] = useState<"quick" | "full">("quick");
+
+    // Animation values
+    const scanningRotation = useSharedValue(0);
+    const connectionScale = useSharedValue(1);
+
+    // Start rotating animation when scanning
+    React.useEffect(() => {
+        if (isScanning) {
+            scanningRotation.value = withRepeat(
+                withTiming(360, {
+                    duration: 2000,
+                    easing: Easing.linear,
+                }),
+                -1, // Infinite repetitions
+                false // Don't reverse animation
+            );
+        } else {
+            scanningRotation.value = withTiming(0, {
+                duration: 300,
+            });
+        }
+    }, [isScanning]);
+
+    // Connection status icon animation
+    React.useEffect(() => {
+        connectionScale.value = withSequence(
+            withSpring(1.3),
+            withSpring(1)
+        );
+    }, [isConnected]);
+
+    // Animated styles
+    const rotatingStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${scanningRotation.value}deg` }],
+    }));
+
+    const connectionIconStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: connectionScale.value }],
+    }));
 
     // Handle starting calibration process
     const handleStartCalibration = async (type: 'quick' | 'full') => {
@@ -62,9 +117,13 @@ export default function SettingsScreen() {
     return (
         <View style={styles.container}>
             {/* Connection Status Card */}
-            <View style={styles.card}>
+            <Animated.View
+                style={styles.card}
+                entering={FadeIn.duration(500)}
+            >
                 <View style={styles.cardHeader}>
-                    <MaterialCommunityIcons
+                    <AnimatedMaterialIcon
+                        style={connectionIconStyle}
                         name={isConnected ? "bluetooth-connect" : "bluetooth-off"}
                         size={24}
                         color={isConnected ? "#22C55E" : "#EF4444"}
@@ -74,37 +133,68 @@ export default function SettingsScreen() {
                 <Text style={styles.statusText}>
                     Status: {isConnected ? "Connected" : isScanning ? "Scanning..." : "Disconnected"}
                 </Text>
-            </View>
+            </Animated.View>
 
             {/* Connection Controls */}
             <View style={styles.buttonContainer}>
                 {isConnected ? (
-                    <TouchableOpacity
-                        style={[styles.button, styles.disconnectButton]}
-                        onPress={disconnect}
+                    <Animated.View
+                        entering={FadeIn.duration(300)}
+                        exiting={FadeOut.duration(300)}
                     >
-                        <MaterialCommunityIcons
-                            name="bluetooth-off"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>Disconnect</Text>
-                    </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.button, styles.disconnectButton]}
+                            onPress={disconnect}
+                        >
+                            <MaterialCommunityIcons
+                                name="bluetooth-off"
+                                size={24}
+                                color="white"
+                            />
+                            <Text style={styles.buttonText}>Disconnect</Text>
+                        </TouchableOpacity>
+                    </Animated.View>
                 ) : (
-                    <TouchableOpacity
-                        style={[styles.button, styles.connectButton]}
-                        onPress={startScan}
-                        disabled={isScanning}
-                    >
-                        <MaterialCommunityIcons
-                            name="bluetooth-settings"
-                            size={24}
-                            color="white"
-                        />
-                        <Text style={styles.buttonText}>
-                            {isScanning ? "Scanning..." : "Scan for Device"}
-                        </Text>
-                    </TouchableOpacity>
+                    <View style={styles.scanButtonContainer}>
+                        <TouchableOpacity
+                            style={[
+                                styles.button,
+                                styles.connectButton,
+                                isScanning && styles.scanningButton
+                            ]}
+                            onPress={startScan}
+                            disabled={isScanning}
+                        >
+                            <AnimatedMaterialIcon
+                                style={[rotatingStyle]}
+                                name={isScanning ? "loading" : "bluetooth-settings"}
+                                size={24}
+                                color="white"
+                            />
+                            <Text style={styles.buttonText}>
+                                {isScanning ? "Scanning..." : "Scan for Device"}
+                            </Text>
+                        </TouchableOpacity>
+
+                        {isScanning && (
+                            <Animated.View
+                                entering={SlideInRight.duration(300)}
+                                exiting={SlideOutRight.duration(300)}
+                            >
+                                <TouchableOpacity
+                                    style={[styles.button, styles.cancelButton]}
+                                    onPress={stopScan}
+                                >
+                                    <MaterialCommunityIcons
+                                        name="close-circle"
+                                        size={24}
+                                        color="white"
+                                    />
+                                    <Text style={styles.buttonText}>Cancel</Text>
+                                </TouchableOpacity>
+                            </Animated.View>
+                        )}
+                    </View>
                 )}
             </View>
 
@@ -189,6 +279,7 @@ const styles = StyleSheet.create({
         gap: 12,
         width: '100%',
         justifyContent: 'space-between',
+        overflow: 'hidden', // For icon animations
     },
     button: {
         flexDirection: 'row',
@@ -226,5 +317,22 @@ const styles = StyleSheet.create({
     },
     fullCalibrateButton: {
         backgroundColor: '#8B5CF6',
+    },
+    scanButtonContainer: {
+        gap: 12,
+        width: '100%',
+        overflow: 'hidden', // Important for slide animations
+    },
+    scanningButton: {
+        backgroundColor: '#4B5563', // More muted color while scanning
+    },
+    cancelButton: {
+        backgroundColor: '#EF4444', // Red cancel button
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+        borderRadius: 12,
+        gap: 8,
     },
 });

@@ -96,7 +96,23 @@ class ServerCallbacks : public BLEServerCallbacks
   {
     deviceConnected = false;
     connectionChanged = true;
-    server->startAdvertising();
+
+    // Reset all characteristics
+    if (pAccCharacteristic)
+    {
+      pAccCharacteristic->notify(); // Send final notification
+    }
+    if (pGyrCharacteristic)
+    {
+      pGyrCharacteristic->notify(); // Send final notification
+    }
+
+    // Restart advertising to allow new connections
+    delay(500); // Short delay to ensure all notifications are sent
+    server->getAdvertising()->start();
+
+    // Force display update
+    deviceDisplay.updateStatus(false, false);
   }
 };
 

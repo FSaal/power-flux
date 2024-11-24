@@ -61,6 +61,7 @@ export interface BLEContextType {
     isConnected: boolean;
     isScanning: boolean;
     startScan: () => Promise<void>;
+    stopScan: () => void;
     disconnect: () => Promise<void>;
     calibrationState: CalibrationState;
     startQuickCalibration: () => Promise<void>;
@@ -347,19 +348,50 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
     }, [isScanning, updateSensorData]);
 
+    const stopScan = useCallback(() => {
+        if (isScanning) {
+            Logger.info('Manually stopping device scan');
+            bleManager.stopDeviceScan();
+            setIsScanning(false);
+        }
+    }, [isScanning]);
+
     /**
      * Disconnects from currently connected BLE device
      */
     const disconnect = useCallback(async () => {
         try {
             Logger.info('Initiating disconnect');
-            const connectedDevices = await bleManager.connectedDevices([]);
-            await Promise.all(connectedDevices.map(device => device.connect()));
+            const connectedDevices = await bleManager.connectedDevices([SERVICE_UUID]);
+
+            // Properly disconnect from each device and wait for all to complete
+            await Promise.all(connectedDevices.map(async device => {
+                Logger.info(`Disconnecting from device: ${device.id}`);
+                try {
+                    // Cancel all notifications/monitors first
+                    await device.cancelConnection();
+                    Logger.info(`Successfully disconnected from device: ${device.id}`);
+                } catch (error) {
+                    Logger.error(`Error disconnecting from device ${device.id}:`, error);
+                    throw error;
+                }
+            }));
+
+            // Reset all state
             setIsConnected(false);
+            setSensorData(null);
+            setCalibrationState({
+                isCalibrating: false,
+                status: 'idle',
+                type: 'none',
+                progress: 0
+            });
             Logger.info('Disconnect complete');
         } catch (error) {
             Logger.error('Disconnect error:', error);
             Alert.alert('Disconnect Error', 'Failed to disconnect from device');
+            // Even if there's an error, we should reset our connection state
+            setIsConnected(false);
         }
     }, []);
 
@@ -506,6 +538,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             isConnected,
             isScanning,
             startScan,
+            stopScan,
             disconnect,
             sensorData,
             calibrationState,
@@ -514,7 +547,7 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             startFullCalibration,
             abortCalibration,
             setOnDataReceived,
-            onCalibrationProgress: handleCalibrationProgress
+            onCalibrationProgress: handleCalibrationProgress,
         }}>
             {children}
         </BLEContext.Provider>
