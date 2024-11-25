@@ -1,6 +1,6 @@
+import { BLEProvider } from '@/shared/services/ble_context';
 import { Stack } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { BLEProvider } from '../shared/services/ble_context';
 
 export default function RootLayout() {
   return (
