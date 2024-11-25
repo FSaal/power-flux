@@ -6,7 +6,7 @@
  * handles recording sessions, and manages data storage.
  */
 
-import { useBLE } from '@/services/BLEContext';
+import { useBLE } from '@/shared/services/ble_context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -17,8 +17,8 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
-import { SensorData } from '../../services/BLEContext';
 import { dbService } from '../../services/database';
+import { SensorData } from '../../shared/services/ble_context';
 
 /**
  * Logger utility for consistent log formatting
