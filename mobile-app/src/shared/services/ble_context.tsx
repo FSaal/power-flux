@@ -1,6 +1,6 @@
 /**
  * BLEContext.tsx
- * 
+ *
  * This module provides a React Context for managing Bluetooth Low Energy (BLE) connections
  * and data handling for the PowerFlux application. It manages the connection to the M5Stack
  * device and processes IMU (accelerometer and gyroscope) data.
@@ -8,7 +8,8 @@
 
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Alert } from 'react-native';
-import { BleManager, Characteristic, Device } from 'react-native-ble-plx';
+import { BleError, BleManager, Characteristic, Device } from 'react-native-ble-plx';
+import { CalibrationState, CalibrationStatus, DeviceCalibrationState } from '../types/calibration';
 
 // Configuration constants
 const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
@@ -17,132 +18,114 @@ const CHAR_GYR_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a9';
 const CHAR_CALIB_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26aa';
 const DEVICE_NAME = 'PowerFlux';
 const SCAN_TIMEOUT = 10000; // 10 seconds
+export const BATCH_SIZE = 2;
 
-/**
- * Represents a complete set of sensor data from both accelerometer and gyroscope
- */
+// Type definitions and interfaces
 export interface SensorData {
-    accX: number;
-    accY: number;
-    accZ: number;
-    gyrX: number;
-    gyrY: number;
-    gyrZ: number;
-    temperature?: number;
-    timestamp: number;
+  accX: number;
+  accY: number;
+  accZ: number;
+  gyrX: number;
+  gyrY: number;
+  gyrZ: number;
+  temperature?: number;
+  timestamp: number;
 }
 
-export interface CalibrationState {
-    isCalibrating: boolean;
-    status: 'idle' | 'in_progress' | 'completed' | 'failed';
-    type: 'none' | 'quick' | 'full';
-    progress: number;
-    error?: string;
-}
-
-export interface CalibrationProgress {
-    state: number;      // uint8_t
-    progress: number;   // uint8_t
-    temperature: number;// float
-    positionIndex: number; // uint8_t
-    reserved: number;   // uint8_t
+export interface BLEContextType {
+  bleManager: BleManager;
+  isConnected: boolean;
+  isScanning: boolean;
+  startScan: () => Promise<void>;
+  stopScan: () => void;
+  disconnect: () => Promise<void>;
+  calibrationState: CalibrationState;
+  startQuickCalibration: () => Promise<void>;
+  abortCalibration: () => Promise<void>;
+  sensorData: SensorData | null;
+  setOnDataReceived: (callback: ((data: SensorData) => void) | undefined) => void;
+  onCalibrationProgress: (progress: CalibrationProgress) => void;
+  setCalibrationState: React.Dispatch<React.SetStateAction<CalibrationState>>;
 }
 
 export enum CalibrationCommand {
-    START = 1,
-    ABORT = 2,
-    START_FULL = 3,
-    START_QUICK = 4
+  ABORT = 2,
+  START_QUICK = 1,
 }
 
-
-export interface BLEContextType {
-    bleManager: BleManager;
-    isConnected: boolean;
-    isScanning: boolean;
-    startScan: () => Promise<void>;
-    stopScan: () => void;
-    disconnect: () => Promise<void>;
-    calibrationState: CalibrationState;
-    startQuickCalibration: () => Promise<void>;
-    startFullCalibration: () => Promise<void>;
-    abortCalibration: () => Promise<void>;
-    sensorData: SensorData | null;
-    setOnDataReceived: (callback: ((data: SensorData) => void) | undefined) => void;
-    onCalibrationProgress: (progress: CalibrationProgress) => void;
-    setCalibrationState: React.Dispatch<React.SetStateAction<CalibrationState>>;
+export interface CalibrationProgress {
+  state: number; // uint8_t
+  progress: number; // uint8_t
 }
 
-
-// Create Context with undefined initial value
-const BLEContext = createContext<BLEContextType | undefined>(undefined);
-
-// Create static instances
+// Static instances
 const bleManager = new BleManager();
+const BLEContext = createContext<BLEContextType | undefined>(undefined);
 const dataCallbackRef = { current: undefined as ((data: SensorData) => void) | undefined };
 const latestData = { current: {} as Partial<SensorData> };
 
-/**
- * Logging utility for consistent log formatting
- */
+// Helper functions
 const Logger = {
-    error: (message: string, ...args: any[]) => {
-        console.error(`[BLE] ERROR: ${message}`, ...args);
-    },
-    warn: (message: string, ...args: any[]) => {
-        console.warn(`[BLE] WARN: ${message}`, ...args);
-    },
-    info: (message: string, ...args: any[]) => {
-        if (__DEV__) {
-            console.info(`[BLE] INFO: ${message}`, ...args);
-        }
-    },
-    debug: (message: string, ...args: any[]) => {
-        if (__DEV__) {
-            console.debug(`[BLE] DEBUG: ${message}`, ...args);
-        }
+  error: (message: string, ...args: any[]) => {
+    console.error(`[BLE] ERROR: ${message}`, ...args);
+  },
+  warn: (message: string, ...args: any[]) => {
+    console.warn(`[BLE] WARN: ${message}`, ...args);
+  },
+  info: (message: string, ...args: any[]) => {
+    if (__DEV__) {
+      console.info(`[BLE] INFO: ${message}`, ...args);
     }
+  },
+  debug: (message: string, ...args: any[]) => {
+    if (__DEV__) {
+      console.debug(`[BLE] DEBUG: ${message}`, ...args);
+    }
+  },
 };
 
 const getConnectedDevice = async (): Promise<Device | null> => {
-    try {
-        const connectedDevices = await bleManager.connectedDevices([SERVICE_UUID]);
-        if (connectedDevices.length === 0) {
-            return null;
-        }
-        return connectedDevices[0];
-    } catch (error) {
-        Logger.error('Error getting connected device:', error);
-        return null;
+  try {
+    const connectedDevices = await bleManager.connectedDevices([SERVICE_UUID]);
+    if (connectedDevices.length === 0) {
+      return null;
     }
+    return connectedDevices[0];
+  } catch (error) {
+    Logger.error('Error getting connected device:', error);
+    return null;
+  }
 };
 
 const findCalibrationCharacteristic = async (device: Device): Promise<Characteristic | null> => {
-    try {
-        console.log('[DEBUG] Starting to find calibration characteristic');
-        const services = await device.services();
-        console.log('[DEBUG] Found services:', services.length);
-
-        const service = services.find(s => s.uuid === SERVICE_UUID);
-        console.log('[DEBUG] Found service:', !!service);
-
-        if (!service) {
-            console.error('[DEBUG] Service not found');
-            throw new Error('Service not found');
-        }
-
-        const characteristics = await service.characteristics();
-        console.log('[DEBUG] Found characteristics:', characteristics.length);
-
-        const calibChar = characteristics.find(c => c.uuid === CHAR_CALIB_UUID);
-        console.log('[DEBUG] Found calibration characteristic:', !!calibChar);
-
-        return calibChar || null;
-
-    } catch (error) {
-        console.error('[DEBUG] Error finding calibration characteristic:', error);
-        return null;
+  try {
+    // Cache the discovered services and characteristics
+    if (!device._services) {
+      // TypeScript might complain about _services, but it's an internal cache
+      console.log('[DEBUG] Discovering services...');
+      const services = await device.services();
+      console.log('[DEBUG] Found services:', services.length);
+      device._services = services;
     }
+
+    const service = device._services.find((s) => s.uuid === SERVICE_UUID);
+    if (!service) {
+      console.error('[DEBUG] Service not found');
+      throw new Error('Service not found');
+    }
+
+    if (!service._characteristics) {
+      console.log('[DEBUG] Discovering characteristics...');
+      const characteristics = await service.characteristics();
+      console.log('[DEBUG] Found characteristics:', characteristics.length);
+      service._characteristics = characteristics;
+    }
+
+    return service._characteristics.find((c) => c.uuid === CHAR_CALIB_UUID) || null;
+  } catch (error) {
+    console.error('[DEBUG] Error finding calibration characteristic:', error);
+    return null;
+  }
 };
 
 /**
@@ -150,408 +133,371 @@ const findCalibrationCharacteristic = async (device: Device): Promise<Characteri
  * Manages BLE connection and data processing for the application
  */
 export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [isConnected, setIsConnected] = useState(false);
-    const [isScanning, setIsScanning] = useState(false);
-    const [sensorData, setSensorData] = useState<SensorData | null>(null);
-    const [calibrationState, setCalibrationState] = useState<CalibrationState>({
-        isCalibrating: false,
-        status: 'idle',
-        type: 'none',
-        progress: 0
-    });
+  // State definitions
+  const [isConnected, setIsConnected] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [sensorData, setSensorData] = useState<SensorData | null>(null);
+  const [calibrationState, setCalibrationState] = useState<CalibrationState>({
+    isCalibrating: false,
+    status: 'idle',
+    progress: 0,
+    deviceState: DeviceCalibrationState.IDLE,
+  });
 
-    /**
-     * Sets callback for handling received sensor data
-     */
-    const setOnDataReceived = useCallback((callback: ((data: SensorData) => void) | undefined) => {
-        Logger.debug(`Setting data callback: ${callback ? 'Provided' : 'Undefined'}`);
-        dataCallbackRef.current = callback;
-    }, []);
+  // Callback handlers
+  const setOnDataReceived = useCallback((callback: ((data: SensorData) => void) | undefined) => {
+    Logger.debug(`Setting data callback: ${callback ? 'Provided' : 'Undefined'}`);
+    dataCallbackRef.current = callback;
+  }, []);
 
-    /**
-     * Updates sensor data state and triggers callbacks when complete data set is available
-     */
-    const updateSensorData = useCallback((newData: Partial<SensorData>) => {
-        latestData.current = { ...latestData.current, ...newData };
-        const { accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp } = latestData.current;
+  const updateSensorData = useCallback(
+    (data: { type: 'acc' | 'gyr'; timestamp: number; x: number; y: number; z: number }) => {
+      const measurement: Partial<SensorData> = {
+        timestamp: data.timestamp,
+        ...(data.type === 'acc'
+          ? { accX: data.x, accY: data.y, accZ: data.z }
+          : { gyrX: data.x, gyrY: data.y, gyrZ: data.z }),
+      };
 
-        if (accX !== undefined && accY !== undefined && accZ !== undefined &&
-            gyrX !== undefined && gyrY !== undefined && gyrZ !== undefined &&
-            timestamp !== undefined) {
+      if (latestData.current.timestamp === measurement.timestamp) {
+        const completeData: SensorData = {
+          ...latestData.current,
+          ...measurement,
+        } as SensorData;
 
-            const completeData: SensorData = {
-                accX, accY, accZ, gyrX, gyrY, gyrZ, timestamp
-            };
-
-            setSensorData(completeData);
-
-            if (dataCallbackRef.current) {
-                dataCallbackRef.current(completeData);
-                latestData.current = {}; // Clear latest data after processing
-            }
+        if (dataCallbackRef.current) {
+          dataCallbackRef.current(completeData);
         }
-    }, []);
+      } else {
+        latestData.current = measurement;
+      }
 
-    /**
-     * Initiates BLE device scanning
-     */
-    const startScan = useCallback(async () => {
-        if (isScanning) {
-            Logger.warn('Scan already in progress');
-            return;
+      setSensorData((prev) => ({ ...prev, ...measurement }) as SensorData);
+    },
+    [],
+  );
+
+  const createCharacteristicHandler =
+    (type: 'acc' | 'gyr') => (error: BleError | null, characteristic: Characteristic | null) => {
+      if (error) {
+        Logger.error(`${type} monitoring error:`, error);
+        return;
+      }
+
+      if (characteristic?.value) {
+        const base64 = characteristic.value;
+        const binaryString = atob(base64);
+        const bytes = new Uint8Array(binaryString.length);
+
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
         }
 
-        try {
-            setIsScanning(true);
-            Logger.info('Starting device scan');
+        const dataView = new DataView(bytes.buffer);
+        const x = dataView.getFloat32(0, true);
+        const y = dataView.getFloat32(4, true);
+        const z = dataView.getFloat32(8, true);
+        const timestamp = dataView.getUint32(12, true);
 
-            bleManager.startDeviceScan(
-                null,
-                { allowDuplicates: false },
-                async (error, device) => {
-                    if (error) {
-                        Logger.error('Scan error:', error);
-                        setIsScanning(false);
-                        Alert.alert('Scan Error', error.message);
-                        return;
-                    }
+        updateSensorData({ type, timestamp, x, y, z });
+      }
+    };
 
-                    if (device?.name === DEVICE_NAME) {
-                        Logger.info('PowerFlux device found:', device.id);
-                        bleManager.stopDeviceScan();
+  const handleCalibrationProgress = useCallback((progress: CalibrationProgress) => {
+    const getStatus = (state: DeviceCalibrationState): CalibrationStatus => {
+      switch (state) {
+        case DeviceCalibrationState.QUICK_COMPLETE:
+          return 'completed';
+        case DeviceCalibrationState.FAILED:
+          return 'failed';
+        case DeviceCalibrationState.IDLE:
+          return 'idle';
+        default:
+          return 'in_progress';
+      }
+    };
 
-                        try {
-                            const connectedDevice = await device.connect();
-                            await connectedDevice.discoverAllServicesAndCharacteristics();
-                            Logger.info('Device connected and services discovered');
+    setCalibrationState((prev) => ({
+      ...prev,
+      isCalibrating:
+        progress.state !== DeviceCalibrationState.QUICK_COMPLETE &&
+        progress.state !== DeviceCalibrationState.FAILED,
+      status: getStatus(progress.state),
+      progress: progress.progress,
+      deviceState: progress.state,
+      error: progress.state === DeviceCalibrationState.FAILED ? 'Calibration failed' : undefined,
+    }));
+  }, []);
 
-                            // Monitor accelerometer data
-                            connectedDevice.monitorCharacteristicForService(
-                                SERVICE_UUID,
-                                CHAR_ACC_UUID,
-                                (error, characteristic) => {
-                                    if (error) {
-                                        Logger.error('Accelerometer monitoring error:', error);
-                                        return;
-                                    }
+  const setupCalibrationMonitoring = (device: Device) => {
+    // Initialize prevState outside callback to persist between calls
+    let prevState: DeviceCalibrationState = DeviceCalibrationState.IDLE;
 
-                                    if (characteristic?.value) {
-                                        const base64 = characteristic.value;
-                                        const binaryString = atob(base64);
-                                        const bytes = new Uint8Array(binaryString.length);
+    device.monitorCharacteristicForService(
+      SERVICE_UUID,
+      CHAR_CALIB_UUID,
+      (error, characteristic) => {
+        if (error) {
+          Logger.error('Calibration monitoring error:', error);
+          return;
+        }
 
-                                        for (let i = 0; i < binaryString.length; i++) {
-                                            bytes[i] = binaryString.charCodeAt(i);
-                                        }
+        if (characteristic?.value) {
+          const base64 = characteristic.value;
+          const binaryString = atob(base64);
+          const bytes = new Uint8Array(binaryString.length);
 
-                                        const dataView = new DataView(bytes.buffer);
-                                        updateSensorData({
-                                            accX: dataView.getFloat32(0, true),
-                                            accY: dataView.getFloat32(4, true),
-                                            accZ: dataView.getFloat32(8, true),
-                                            timestamp: dataView.getUint32(12, true)
-                                        });
-                                    }
-                                }
-                            );
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
 
-                            // Monitor gyroscope data
-                            connectedDevice.monitorCharacteristicForService(
-                                SERVICE_UUID,
-                                CHAR_GYR_UUID,
-                                (error, characteristic) => {
-                                    if (error) {
-                                        Logger.error('Gyroscope monitoring error:', error);
-                                        return;
-                                    }
+          const dataView = new DataView(bytes.buffer);
+          const progress: CalibrationProgress = {
+            state: dataView.getUint8(0),
+            progress: dataView.getUint8(1),
+          };
 
-                                    if (characteristic?.value) {
-                                        const base64 = characteristic.value;
-                                        const binaryString = atob(base64);
-                                        const bytes = new Uint8Array(binaryString.length);
+          Logger.info('[CALIB] Parsed progress:', progress);
 
-                                        for (let i = 0; i < binaryString.length; i++) {
-                                            bytes[i] = binaryString.charCodeAt(i);
-                                        }
+          // Handle state transition
+          if (prevState !== progress.state) {
+            Logger.info(`[CALIB] State changed from ${prevState} to ${progress.state}`);
+            prevState = progress.state;
+          }
 
-                                        const dataView = new DataView(bytes.buffer);
-                                        updateSensorData({
-                                            gyrX: dataView.getFloat32(0, true),
-                                            gyrY: dataView.getFloat32(4, true),
-                                            gyrZ: dataView.getFloat32(8, true),
-                                            timestamp: dataView.getUint32(12, true)
-                                        });
-                                    }
-                                }
-                            );
+          handleCalibrationProgress(progress);
+        }
+      },
+    );
+  };
 
-                            // Monitor calibration progress
-                            connectedDevice.monitorCharacteristicForService(
-                                SERVICE_UUID,
-                                CHAR_CALIB_UUID,
-                                (error, characteristic) => {
-                                    if (error) {
-                                        Logger.error('Calibration monitoring error:', error);
-                                        return;
-                                    }
+  // BLE operations
+  const startScan = useCallback(async () => {
+    if (isScanning) {
+      Logger.warn('Scan already in progress');
+      return;
+    }
 
-                                    if (characteristic?.value) {
-                                        const base64 = characteristic.value;
-                                        const binaryString = atob(base64);
-                                        const bytes = new Uint8Array(binaryString.length);
+    try {
+      setIsScanning(true);
+      Logger.info('Starting device scan');
 
-                                        for (let i = 0; i < binaryString.length; i++) {
-                                            bytes[i] = binaryString.charCodeAt(i);
-                                        }
+      bleManager.startDeviceScan(null, { allowDuplicates: false }, async (error, device) => {
+        if (error) {
+          Logger.error('Scan error:', error);
+          setIsScanning(false);
+          Alert.alert('Scan Error', error.message);
+          return;
+        }
 
-                                        const dataView = new DataView(bytes.buffer);
-                                        const progress: CalibrationProgress = {
-                                            state: dataView.getUint8(0),
-                                            progress: dataView.getUint8(1),
-                                            temperature: dataView.getFloat32(2, true),
-                                            positionIndex: dataView.getUint8(6),
-                                            reserved: dataView.getUint8(7)
-                                        };
+        if (device?.name === DEVICE_NAME) {
+          Logger.info('PowerFlux device found:', device.id);
+          bleManager.stopDeviceScan();
 
-                                        handleCalibrationProgress(progress);
-                                    }
-                                }
-                            );
+          try {
+            const connectedDevice = await device.connect();
+            await connectedDevice.discoverAllServicesAndCharacteristics();
+            Logger.info('Device connected and services discovered');
 
-                            setIsConnected(true);
-                            setIsScanning(false);
-                            Logger.info('Device setup complete');
-
-                        } catch (error) {
-                            Logger.error('Connection error:', error);
-                            Alert.alert('Connection Error', 'Failed to connect to device');
-                            setIsConnected(false);
-                            setIsScanning(false);
-                        }
-                    }
-                }
+            // Monitor both accelerometer and gyroscope data with single processing logic
+            connectedDevice.monitorCharacteristicForService(
+              SERVICE_UUID,
+              CHAR_ACC_UUID,
+              createCharacteristicHandler('acc'),
             );
 
-            // Stop scan after timeout
-            setTimeout(() => {
-                if (isScanning) {
-                    Logger.warn('Scan timeout - stopping scan');
-                    bleManager.stopDeviceScan();
-                    setIsScanning(false);
-                }
-            }, SCAN_TIMEOUT);
+            connectedDevice.monitorCharacteristicForService(
+              SERVICE_UUID,
+              CHAR_GYR_UUID,
+              createCharacteristicHandler('gyr'),
+            );
 
-        } catch (error) {
-            Logger.error('Scan startup error:', error);
+            // Monitor calibration progress
+            setupCalibrationMonitoring(connectedDevice);
+
+            setIsConnected(true);
             setIsScanning(false);
-            Alert.alert('Scan Error', 'Failed to start scanning');
+            Logger.info('Device setup complete');
+          } catch (error) {
+            Logger.error('Connection error:', error);
+            Alert.alert('Connection Error', 'Failed to connect to device');
+            setIsConnected(false);
+            setIsScanning(false);
+          }
         }
-    }, [isScanning, updateSensorData]);
+      });
 
-    const stopScan = useCallback(() => {
+      // Stop scan after timeout
+      setTimeout(() => {
         if (isScanning) {
-            Logger.info('Manually stopping device scan');
-            bleManager.stopDeviceScan();
-            setIsScanning(false);
+          Logger.warn('Scan timeout - stopping scan');
+          bleManager.stopDeviceScan();
+          setIsScanning(false);
         }
-    }, [isScanning]);
+      }, SCAN_TIMEOUT);
+    } catch (error) {
+      Logger.error('Scan startup error:', error);
+      setIsScanning(false);
+      Alert.alert('Scan Error', 'Failed to start scanning');
+    }
+  }, [isScanning, updateSensorData]);
 
-    /**
-     * Disconnects from currently connected BLE device
-     */
-    const disconnect = useCallback(async () => {
-        try {
-            Logger.info('Initiating disconnect');
-            const connectedDevices = await bleManager.connectedDevices([SERVICE_UUID]);
+  const stopScan = useCallback(() => {
+    if (isScanning) {
+      Logger.info('Manually stopping device scan');
+      bleManager.stopDeviceScan();
+      setIsScanning(false);
+    }
+  }, [isScanning]);
 
-            // Properly disconnect from each device and wait for all to complete
-            await Promise.all(connectedDevices.map(async device => {
-                Logger.info(`Disconnecting from device: ${device.id}`);
-                try {
-                    // Cancel all notifications/monitors first
-                    await device.cancelConnection();
-                    Logger.info(`Successfully disconnected from device: ${device.id}`);
-                } catch (error) {
-                    Logger.error(`Error disconnecting from device ${device.id}:`, error);
-                    throw error;
-                }
-            }));
+  const disconnect = useCallback(async () => {
+    try {
+      Logger.info('Initiating disconnect');
+      const connectedDevices = await bleManager.connectedDevices([SERVICE_UUID]);
 
-            // Reset all state
-            setIsConnected(false);
-            setSensorData(null);
-            setCalibrationState({
-                isCalibrating: false,
-                status: 'idle',
-                type: 'none',
-                progress: 0
-            });
-            Logger.info('Disconnect complete');
-        } catch (error) {
-            Logger.error('Disconnect error:', error);
-            Alert.alert('Disconnect Error', 'Failed to disconnect from device');
-            // Even if there's an error, we should reset our connection state
-            setIsConnected(false);
-        }
-    }, []);
-
-    /**
-     * Starts quick calibration procedure
-     */
-    const startQuickCalibration = useCallback(async () => {
-        try {
-            console.log('[DEBUG] Starting quick calibration');
-            const device = await getConnectedDevice();
-            console.log('[DEBUG] Connected device:', device?.id);
-
-            if (!device) {
-                console.error('[DEBUG] No device connected');
-                throw new Error('No device connected');
-            }
-
-            setCalibrationState({
-                isCalibrating: true,
-                status: 'in_progress',
-                type: 'quick',
-                progress: 0,
-                error: undefined
-            });
-            console.log('[DEBUG] Calibration state set to in_progress');
-
-            const characteristic = await findCalibrationCharacteristic(device);
-            console.log('[DEBUG] Found characteristic:', !!characteristic);
-
-            if (!characteristic) {
-                console.error('[DEBUG] Calibration characteristic not found');
-                throw new Error('Calibration characteristic not found');
-            }
-
-            // Create a Uint8Array instead of using Buffer
-            const command = new Uint8Array([4]);
-            // Convert to base64
-            const base64Command = btoa(String.fromCharCode.apply(null, command));
-
-            console.log('[DEBUG] Sending quick calibration command');
-            await characteristic.writeWithResponse(base64Command);
-            console.log('[DEBUG] Command sent successfully');
-
-        } catch (error) {
-            console.error('[DEBUG] Error in startQuickCalibration:', error);
-            console.error('[DEBUG] Error type:', typeof error);
-            console.error('[DEBUG] Is Error instance:', error instanceof Error);
-
-            const errorMessage = error instanceof Error ? error.message : 'Unknown calibration error';
-            console.error('[DEBUG] Error message:', errorMessage);
-
-            setCalibrationState({
-                isCalibrating: false,
-                status: 'failed',
-                type: 'none',
-                progress: 0,
-                error: errorMessage
-            });
-
+      // Properly disconnect from each device and wait for all to complete
+      await Promise.all(
+        connectedDevices.map(async (device) => {
+          Logger.info(`Disconnecting from device: ${device.id}`);
+          try {
+            // Cancel all notifications/monitors first
+            await device.cancelConnection();
+            Logger.info(`Successfully disconnected from device: ${device.id}`);
+          } catch (error) {
+            Logger.error(`Error disconnecting from device ${device.id}:`, error);
             throw error;
-        }
-    }, []);
+          }
+        }),
+      );
 
-    /**
-     * Starts full calibration procedure
-     */
-    const startFullCalibration = useCallback(async () => {
-        try {
-            const device = await getConnectedDevice();
-            if (!device) throw new Error('No device connected');
+      // Reset all state
+      setIsConnected(false);
+      setSensorData(null);
+      setCalibrationState({
+        isCalibrating: false,
+        status: 'idle',
+        progress: 0,
+        deviceState: DeviceCalibrationState.FAILED,
+      });
+      Logger.info('Disconnect complete');
+    } catch (error) {
+      Logger.error('Disconnect error:', error);
+      Alert.alert('Disconnect Error', 'Failed to disconnect from device');
+      // Even if there's an error, we should reset our connection state
+      setIsConnected(false);
+    }
+  }, []);
 
-            setCalibrationState({
-                isCalibrating: true,
-                status: 'in_progress',
-                type: 'full',
-                progress: 0
-            });
+  // Calibration operations
+  const startQuickCalibration = useCallback(async () => {
+    try {
+      console.log('[DEBUG] Starting quick calibration');
+      const device = await getConnectedDevice();
+      console.log('[DEBUG] Connected device:', device?.id);
 
-            const characteristic = await findCalibrationCharacteristic(device);
-            if (!characteristic) throw new Error('Calibration characteristic not found');
+      if (!device) {
+        console.error('[DEBUG] No device connected');
+        throw new Error('No device connected');
+      }
 
-            const command = new Uint8Array([3]);
-            const base64Command = btoa(String.fromCharCode.apply(null, command));
+      setCalibrationState({
+        isCalibrating: true,
+        status: 'in_progress',
+        progress: 0,
+        error: undefined,
+        deviceState: DeviceCalibrationState.QUICK_STABILIZING,
+      });
+      console.log('[DEBUG] Calibration state set to in_progress');
 
-            await characteristic.writeWithResponse(base64Command);
-        } catch (error: unknown) {
-            setCalibrationState(prev => ({
-                ...prev,
-                status: 'failed',
-                error: error instanceof Error ? error.message : 'Unknown error occurred'
-            }));
-            throw error;
-        }
-    }, []);
+      const characteristic = await findCalibrationCharacteristic(device);
+      console.log('[DEBUG] Found characteristic:', !!characteristic);
 
-    /**
-     * Aborts ongoing calibration
-     */
-    const abortCalibration = useCallback(async () => {
-        try {
-            const device = await getConnectedDevice();
-            if (!device) throw new Error('No device connected');
+      if (!characteristic) {
+        console.error('[DEBUG] Calibration characteristic not found');
+        throw new Error('Calibration characteristic not found');
+      }
 
-            const characteristic = await findCalibrationCharacteristic(device);
-            if (!characteristic) throw new Error('Calibration characteristic not found');
+      // Create a Uint8Array instead of using Buffer
+      const command = new Uint8Array([CalibrationCommand.START_QUICK]);
+      const base64Command = btoa(String.fromCharCode.apply(null, command));
 
-            const command = new Uint8Array([2]); // 2 is ABORT command
-            const base64Command = btoa(String.fromCharCode.apply(null, command));
+      console.log('[DEBUG] Sending quick calibration command');
+      await characteristic.writeWithResponse(base64Command);
+      console.log('[DEBUG] Command sent successfully');
 
-            await characteristic.writeWithResponse(base64Command);
-            setCalibrationState({
-                isCalibrating: false,
-                status: 'idle',
-                type: 'none',
-                progress: 0
-            });
-        } catch (error) {
-            Logger.error('Abort calibration error:', error);
-            throw error;
-        }
-    }, []);
+      // Verify the write - properly decode base64
+      const response = await characteristic.read();
+      if (response?.value) {
+        const bytes = atob(response.value)
+          .split('')
+          .map((c) => c.charCodeAt(0));
+        console.log('[DEBUG] Read back value (bytes):', bytes);
+      }
+    } catch (error) {
+      console.error('[DEBUG] Error in startQuickCalibration:', error);
+      console.error('[DEBUG] Error type:', typeof error);
+      console.error('[DEBUG] Is Error instance:', error instanceof Error);
 
-    /**
-     * Handles calibration progress updates from device
-     */
-    const handleCalibrationProgress = useCallback((progress: CalibrationProgress) => {
-        setCalibrationState(prev => ({
-            ...prev,
-            isCalibrating: !([11, 12, 15].includes(progress.state)), // Not calibrating if completed, failed, or quick complete
-            status: progress.state === 15 ? 'completed' : // QUICK_COMPLETE
-                progress.state === 11 ? 'completed' : // COMPLETED (full calibration)
-                    progress.state === 12 ? 'failed' :    // FAILED
-                        progress.state === 0 ? 'idle' :      // IDLE
-                            'in_progress',
-            progress: progress.progress,
-            error: progress.state === 12 ? 'Calibration failed' : undefined,
-            type: prev.type // Maintain the current calibration type
-        }));
-    }, []);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown calibration error';
+      console.error('[DEBUG] Error message:', errorMessage);
 
-    return (
-        <BLEContext.Provider value={{
-            bleManager,
-            isConnected,
-            isScanning,
-            startScan,
-            stopScan,
-            disconnect,
-            sensorData,
-            calibrationState,
-            setCalibrationState,
-            startQuickCalibration,
-            startFullCalibration,
-            abortCalibration,
-            setOnDataReceived,
-            onCalibrationProgress: handleCalibrationProgress,
-        }}>
-            {children}
-        </BLEContext.Provider>
-    );
+      setCalibrationState({
+        isCalibrating: false,
+        status: 'failed',
+        progress: 0,
+        error: errorMessage,
+        deviceState: DeviceCalibrationState.FAILED,
+      });
+
+      throw error;
+    }
+  }, []);
+
+  const abortCalibration = useCallback(async () => {
+    try {
+      const device = await getConnectedDevice();
+      if (!device) throw new Error('No device connected');
+
+      const characteristic = await findCalibrationCharacteristic(device);
+      if (!characteristic) throw new Error('Calibration characteristic not found');
+
+      const command = new Uint8Array([2]); // 2 is ABORT command
+      const base64Command = btoa(String.fromCharCode.apply(null, command));
+
+      await characteristic.writeWithResponse(base64Command);
+      setCalibrationState({
+        isCalibrating: false,
+        status: 'idle',
+        progress: 0,
+        deviceState: DeviceCalibrationState.IDLE,
+      });
+    } catch (error) {
+      Logger.error('Abort calibration error:', error);
+      throw error;
+    }
+  }, []);
+
+  return (
+    <BLEContext.Provider
+      value={{
+        bleManager,
+        isConnected,
+        isScanning,
+        startScan,
+        stopScan,
+        disconnect,
+        sensorData,
+        calibrationState,
+        setCalibrationState,
+        startQuickCalibration,
+        abortCalibration,
+        setOnDataReceived,
+        onCalibrationProgress: handleCalibrationProgress,
+      }}
+    >
+      {children}
+    </BLEContext.Provider>
+  );
 };
 
 /**
@@ -559,9 +505,9 @@ export const BLEProvider: React.FC<{ children: React.ReactNode }> = ({ children 
  * @throws Error if used outside of BLEProvider
  */
 export const useBLE = () => {
-    const context = useContext(BLEContext);
-    if (context === undefined) {
-        throw new Error('useBLE must be used within a BLEProvider');
-    }
-    return context;
+  const context = useContext(BLEContext);
+  if (context === undefined) {
+    throw new Error('useBLE must be used within a BLEProvider');
+  }
+  return context;
 };

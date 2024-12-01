@@ -14,7 +14,6 @@ export default function SettingsScreen() {
     isConnected,
     isScanning,
     showCalibrationModal,
-    calibrationType,
     calibrationState,
 
     // Actions
@@ -23,7 +22,6 @@ export default function SettingsScreen() {
     disconnect,
     handleStartCalibration,
     startQuickCalibration,
-    startFullCalibration,
     abortCalibration,
     handleModalClose,
   } = useDeviceSettings();
@@ -40,15 +38,12 @@ export default function SettingsScreen() {
       />
       <CalibrationControls
         isConnected={isConnected}
-        onStartQuickCalibration={() => handleStartCalibration('quick')}
-        onStartFullCalibration={() => handleStartCalibration('full')}
+        onStartQuickCalibration={() => handleStartCalibration()}
       />
       <CalibrationModal
         visible={showCalibrationModal}
         onClose={handleModalClose}
-        type={calibrationType}
         startQuickCalibration={startQuickCalibration}
-        startFullCalibration={startFullCalibration}
         calibrationState={calibrationState}
         onAbort={abortCalibration}
       />

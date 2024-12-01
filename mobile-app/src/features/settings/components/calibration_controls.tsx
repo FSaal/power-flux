@@ -7,13 +7,11 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 interface CalibrationControlsProps {
   isConnected: boolean;
   onStartQuickCalibration: () => void;
-  onStartFullCalibration: () => void;
 }
 
 export const CalibrationControls = ({
   isConnected,
   onStartQuickCalibration,
-  onStartFullCalibration,
 }: CalibrationControlsProps) => {
   return (
     <View style={styles.container}>
@@ -23,16 +21,7 @@ export const CalibrationControls = ({
         disabled={!isConnected}
       >
         <MaterialCommunityIcons name="tune" size={24} color={theme.colors.text} />
-        <Text style={styles.buttonText}>Quick Calibrate</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[buttonStyles.button, buttonStyles.primary, !isConnected && buttonStyles.disabled]}
-        onPress={onStartFullCalibration}
-        disabled={!isConnected}
-      >
-        <MaterialCommunityIcons name="tune" size={24} color={theme.colors.text} />
-        <Text style={styles.buttonText}>Full Calibrate</Text>
+        <Text style={buttonStyles.text}>Calibrate</Text>
       </TouchableOpacity>
     </View>
   );
@@ -41,10 +30,5 @@ export const CalibrationControls = ({
 const styles = StyleSheet.create({
   container: {
     gap: theme.spacing.md,
-  },
-  buttonText: {
-    color: theme.colors.text,
-    fontSize: 16,
-    fontWeight: 'bold',
   },
 });

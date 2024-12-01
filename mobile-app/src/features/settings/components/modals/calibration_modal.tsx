@@ -1,5 +1,6 @@
 import { buttonStyles, modalStyles } from '@/shared/styles/components';
 import { theme } from '@/shared/styles/theme';
+import { CalibrationState, DeviceCalibrationState } from '@/shared/types/calibration';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -10,28 +11,34 @@ type ModalState = 'initial' | 'inProgress' | 'failed' | 'success';
 
 interface CalibrationModalProps {
   visible: boolean;
-  type: 'quick' | 'full';
-  calibrationState: {
-    isCalibrating: boolean;
-    status: string;
-    progress: number;
-  };
+  calibrationState: CalibrationState;
   startQuickCalibration: () => Promise<void>;
-  startFullCalibration: () => Promise<void>;
   onAbort: () => Promise<void>;
   onClose: () => void;
 }
 
+export const getCalibrationInstructions = (deviceState: DeviceCalibrationState): string => {
+  switch (deviceState) {
+    case DeviceCalibrationState.QUICK_STATIC_FLAT:
+      return 'Place the device on a flat surface with the display facing up';
+    case DeviceCalibrationState.QUICK_WAITING_ROTATION:
+      return 'Rotate the device 90 degrees so the display faces you (and the M5 button is on the left)';
+    case DeviceCalibrationState.QUICK_STABILIZING:
+      return 'Hold the device still...';
+    case DeviceCalibrationState.QUICK_STATIC_SIDE:
+      return 'Keep the device steady with display facing you';
+    default:
+      return 'Follow the calibration steps';
+  }
+};
+
 export const CalibrationModal = ({
   visible,
-  type,
   calibrationState,
   startQuickCalibration,
-  startFullCalibration,
   onAbort,
   onClose,
 }: CalibrationModalProps) => {
-  // Determine current modal state based on calibration status
   const getModalState = (): ModalState => {
     if (calibrationState.status === 'failed') return 'failed';
     if (calibrationState.status === 'completed') return 'success';
@@ -41,11 +48,7 @@ export const CalibrationModal = ({
 
   const handleStartCalibration = async () => {
     try {
-      if (type === 'quick') {
-        await startQuickCalibration();
-      } else {
-        await startFullCalibration();
-      }
+      await startQuickCalibration();
     } catch (error) {
       console.error('Error starting calibration:', error);
     }
@@ -114,7 +117,7 @@ export const CalibrationModal = ({
               />
             </View>
             <Text style={[modalStyles.text, styles.instructionText]}>
-              Place the device on a flat surface and keep it still
+              {getCalibrationInstructions(calibrationState.deviceState)}
             </Text>
             <TouchableOpacity
               style={[buttonStyles.button, buttonStyles.danger, modalStyles.buttonSingle]}
@@ -130,9 +133,9 @@ export const CalibrationModal = ({
           <View style={modalStyles.content}>
             <PlaceDeviceAnimation />
             <Text style={[modalStyles.text, styles.instructionText]}>
-              {type === 'full'
-                ? 'Place the sensor on a flat, stable surface. The device will need to be moved to different positions during calibration.'
-                : 'Place the sensor on a flat, stable surface with the display facing up'}
+              {
+                'Place the sensor on a flat, stable surface. The device will need to be moved to different positions during calibration.'
+              }
             </Text>
             <TouchableOpacity
               style={[buttonStyles.button, buttonStyles.primary, modalStyles.buttonSingle]}
@@ -159,9 +162,7 @@ export const CalibrationModal = ({
       >
         <View style={modalStyles.bottomSheet} onStartShouldSetResponder={() => true}>
           <View style={modalStyles.handle} />
-          <Text style={modalStyles.title}>
-            {type === 'full' ? 'Full Calibration' : 'Quick Calibration'}
-          </Text>
+          <Text style={modalStyles.title}>{'Quick Calibration'}</Text>
           {renderContent()}
         </View>
       </TouchableOpacity>

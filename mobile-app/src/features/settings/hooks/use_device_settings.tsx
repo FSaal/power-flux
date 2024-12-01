@@ -1,4 +1,5 @@
 import { useBLE } from '@/shared/services/ble_context';
+import { DeviceCalibrationState } from '@/shared/types/calibration';
 import { useState } from 'react';
 import { Alert } from 'react-native';
 
@@ -8,7 +9,6 @@ export const useDeviceSettings = () => {
 
   // Local state
   const [showCalibrationModal, setShowCalibrationModal] = useState(false);
-  const [calibrationType, setCalibrationType] = useState<'quick' | 'full'>('quick');
 
   // Actions
   const {
@@ -17,31 +17,29 @@ export const useDeviceSettings = () => {
     disconnect,
     setCalibrationState,
     startQuickCalibration,
-    startFullCalibration,
     abortCalibration,
   } = useBLE();
 
   // Action handlers
-  const handleStartCalibrationPress = async (type: 'quick' | 'full') => {
+  const handleStartCalibrationPress = async () => {
     try {
-      await handleStartCalibration(type);
+      await handleStartCalibration();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to start calibration';
       Alert.alert('Calibration Error', errorMessage);
     }
   };
 
-  const handleStartCalibration = async (type: 'quick' | 'full') => {
+  const handleStartCalibration = async () => {
     if (!isConnected) {
       throw new Error('Device not connected');
     }
 
-    setCalibrationType(type);
     setCalibrationState({
       isCalibrating: false,
       status: 'idle',
-      type: 'none',
       progress: 0,
+      deviceState: DeviceCalibrationState.IDLE,
     });
     setShowCalibrationModal(true);
   };
@@ -52,8 +50,8 @@ export const useDeviceSettings = () => {
       setCalibrationState({
         isCalibrating: false,
         status: 'idle',
-        type: 'none',
         progress: 0,
+        deviceState: DeviceCalibrationState.IDLE,
       });
     }
   };
@@ -63,7 +61,6 @@ export const useDeviceSettings = () => {
     isConnected,
     isScanning,
     showCalibrationModal,
-    calibrationType,
     calibrationState,
 
     // Actions
@@ -73,7 +70,6 @@ export const useDeviceSettings = () => {
     handleStartCalibration,
     handleModalClose,
     startQuickCalibration,
-    startFullCalibration,
     abortCalibration,
     handleStartCalibrationPress,
   };
