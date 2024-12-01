@@ -8,36 +8,25 @@
 class DisplayController
 {
 public:
-    static constexpr uint32_t DISPLAY_TIMEOUT = 1000;          // 15 seconds before display timeout
+    static constexpr uint32_t DISPLAY_TIMEOUT = 10000;         // 10 seconds before display timeout
     static constexpr uint16_t BATTERY_UPDATE_INTERVAL = 60000; // 60 seconds for battery update
 
     DisplayController() : lastActivity(0), displayOn(true), lastBatteryUpdate(0) {}
 
-    /**
-     * @brief Initializes the display settings.
-     */
     void begin()
     {
-        M5.Lcd.setRotation(3);      // Set LCD rotation
-        updateStatus(false, false); // Startup screen showing BLE status and recording status off
+        M5.Lcd.setRotation(3);             // Horizontal screen
+        updateDisplayStatus(false, false); // Startup screen showing BLE status and recording status off
     }
 
-    /**
-     * @brief Updates the display with the current BLE connection and recording status.
-     * @param bleConnected Indicates BLE connection status.
-     * @param isRecording Indicates if recording is in progress.
-     */
-    void updateStatus(bool bleConnected, bool isRecording)
+    void updateDisplayStatus(bool bleConnected, bool isRecording)
     {
         wakeDisplay();
         Serial.printf("[DISPLAY] Updating status: BLE %s, Recording %s\n", bleConnected ? "ON" : "OFF", isRecording ? "ON" : "OFF");
         drawMainScreen(bleConnected); // TODO: Add recording status
     }
 
-    /**
-     * @brief Updates the display status based on user interaction and time intervals.
-     */
-    void update()
+    void manageDisplayState()
     {
         M5.update();
 
@@ -86,10 +75,25 @@ public:
         lastActivity = millis();
     }
 
+    void showCalibrationInstruction(const char *instruction)
+    {
+        this->wakeDisplay();
+        M5.Lcd.startWrite();
+        M5.Lcd.fillScreen(PURPLE);
+        M5.Lcd.setCursor(0, 0);
+        M5.Lcd.setTextSize(2);
+        M5.Lcd.setTextColor(WHITE);
+        M5.Lcd.println("Calibrating...");
+        M5.Lcd.setCursor(0, 30);
+        M5.Lcd.println(instruction);
+        M5.Lcd.endWrite();
+        lastActivity = millis();
+    }
+
 private:
-    uint32_t lastActivity;      ///< Last recorded activity time
-    uint32_t lastBatteryUpdate; ///< Last recorded battery update time
-    bool displayOn;             ///< Display on/off status
+    uint32_t lastActivity;      // Last recorded activity time
+    uint32_t lastBatteryUpdate; // Last recorded battery update time
+    bool displayOn;             // Display on/off status
 
     /**
      * @brief Draws the main screen with the BLE connection status.
