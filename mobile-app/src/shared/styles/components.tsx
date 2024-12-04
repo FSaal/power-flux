@@ -149,3 +149,31 @@ export const modalStyles = StyleSheet.create({
     width: '100%',
   },
 });
+
+export const settingStyles = StyleSheet.create({
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  settingInfo: {
+    flex: 1,
+    marginRight: theme.spacing.md,
+  },
+  settingLabel: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  settingDescription: {
+    color: theme.colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+});

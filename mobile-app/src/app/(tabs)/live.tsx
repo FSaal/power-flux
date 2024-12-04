@@ -8,13 +8,20 @@
 
 import { SensorData, useBLE } from '@/shared/services/ble_context';
 import { dbService } from '@/shared/services/database';
+import { removeGravity } from '@/shared/utils/gravity_compensation';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
-/**
- * Logger utility for consistent log formatting
- */
+interface RecordingRef {
+  isRecording: boolean;
+  sessionId: string | null;
+}
+
+interface BlinkingRecordIndicatorProps {
+  startTime: number;
+}
+
 const Logger = {
   error: (message: string, ...args: any[]) => {
     console.error(`[LiveScreen] ERROR: ${message}`, ...args);
@@ -28,16 +35,6 @@ const Logger = {
     }
   },
 };
-
-interface RecordingRef {
-  isRecording: boolean;
-  sessionId: string | null;
-}
-
-interface BlinkingRecordIndicatorProps {
-  startTime: number;
-}
-
 /**
  * Displays a blinking record indicator with elapsed time
  */
@@ -79,6 +76,7 @@ const LiveScreen = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [measurementCount, setMeasurementCount] = useState(0);
   const [showDetails, setShowDetails] = useState(false);
+  const [removeGravityEnabled, setRemoveGravityEnabled] = useState(false);
   const recordingRef = useRef<RecordingRef>({
     isRecording: false,
     sessionId: null,
@@ -175,8 +173,14 @@ const LiveScreen = () => {
     }
   }, [measurementCount]);
 
+  const processedAccel = sensorData
+    ? removeGravityEnabled
+      ? removeGravity({ x: sensorData.accX, y: sensorData.accY, z: sensorData.accZ })
+      : { x: sensorData.accX, y: sensorData.accY, z: sensorData.accZ }
+    : { x: 0, y: 0, z: 0 };
+
   const magnitude = sensorData
-    ? calculateMagnitude(sensorData.accX, sensorData.accY, sensorData.accZ)
+    ? calculateMagnitude(processedAccel.x, processedAccel.y, processedAccel.z)
     : 0;
 
   return (
@@ -203,9 +207,9 @@ const LiveScreen = () => {
           <View style={styles.detailsContainer}>
             <View style={styles.detailsSection}>
               <Text style={styles.detailsHeader}>Accelerometer (m/s²)</Text>
-              <Text style={styles.detailsText}>X: {sensorData.accX.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Y: {sensorData.accY.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Z: {sensorData.accZ.toFixed(2)}</Text>
+              <Text style={styles.detailsText}>X: {processedAccel.x.toFixed(2)}</Text>
+              <Text style={styles.detailsText}>Y: {processedAccel.y.toFixed(2)}</Text>
+              <Text style={styles.detailsText}>Z: {processedAccel.z.toFixed(2)}</Text>
             </View>
 
             <View style={styles.detailsSection}>
@@ -224,6 +228,33 @@ const LiveScreen = () => {
           </View>
         )}
       </Pressable>
+
+      {/* Settings Section */}
+      <View style={styles.settingsContainer}>
+        <Text style={styles.settingsHeader}>Settings</Text>
+
+        <View style={styles.settingsCard}>
+          <View style={styles.settingsCardHeader}>
+            <MaterialCommunityIcons name="signal" size={20} color="#9CA3AF" />
+            <Text style={styles.settingsCardTitle}>Signal Processing</Text>
+          </View>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>Remove Gravity</Text>
+              <Text style={styles.settingDescription}>
+                Compensate for gravitational acceleration
+              </Text>
+            </View>
+            <Switch
+              value={removeGravityEnabled}
+              onValueChange={setRemoveGravityEnabled}
+              trackColor={{ false: '#374151', true: '#6544C0' }}
+              thumbColor={removeGravityEnabled ? '#FFFFFF' : '#9CA3AF'}
+            />
+          </View>
+        </View>
+      </View>
 
       {/* Controls */}
       <View style={styles.controls}>
@@ -261,7 +292,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   mainDisplay: {
-    flex: 1,
+    minHeight: 200,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -325,6 +356,63 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  gravityToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    flex: 1, // This helps with layout in the status bar
+  },
+  toggleLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  settingsContainer: {
+    paddingHorizontal: 16,
+    flex: 1,
+  },
+  settingsHeader: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+  },
+  settingsCard: {
+    backgroundColor: '#1F2937',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+  },
+  settingsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  settingsCardTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  settingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  settingInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  settingLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  settingDescription: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    marginTop: 2,
   },
 });
 
