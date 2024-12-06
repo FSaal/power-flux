@@ -44,3 +44,6 @@ docs/personal_notes.md
 power_flux.code-workspace
 .expo
 
+docs/imu_class.pdf
+mobile-app/.prettierrc.js
+mobile-app/.prettierignore
