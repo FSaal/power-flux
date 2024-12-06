@@ -6,12 +6,14 @@
  * handles recording sessions, and manages data storage.
  */
 
+import { MainDisplay } from '@/features/live/components/main_display';
 import { SensorData, useBLE } from '@/shared/services/ble_context';
 import { dbService } from '@/shared/services/database';
 import { removeGravity } from '@/shared/utils/gravity_compensation';
+import { OrientationFilter } from '@/shared/utils/orientation_filter';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
 interface RecordingRef {
   isRecording: boolean;
@@ -82,6 +84,19 @@ const LiveScreen = () => {
     sessionId: null,
   });
   const [recordingStartTime, setRecordingStartTime] = useState<number>(0);
+  const [orientationFilter] = useState(new OrientationFilter());
+  const [orientation, setOrientation] = useState<{ x: number; y: number; z: number } | undefined>();
+
+  useEffect(() => {
+    if (sensorData && sensorData.accX !== undefined && sensorData.gyrX !== undefined) {
+      const newOrientation = orientationFilter.update(
+        { x: sensorData.accX, y: sensorData.accY, z: sensorData.accZ },
+        { x: sensorData.gyrX, y: sensorData.gyrY, z: sensorData.gyrZ },
+        sensorData.timestamp,
+      );
+      setOrientation(newOrientation);
+    }
+  }, [sensorData]);
 
   /**
    * Calculates the magnitude of a 3D vector
@@ -196,38 +211,15 @@ const LiveScreen = () => {
       </View>
 
       {/* Main Display */}
-      <Pressable style={styles.mainDisplay} onPress={() => setShowDetails(!showDetails)}>
-        <Text style={styles.dataLabel}>Acceleration Magnitude</Text>
-        <Text style={styles.dataValue}>
-          {magnitude.toFixed(2)}
-          <Text style={styles.dataUnit}> m/s²</Text>
-        </Text>
-
-        {showDetails && sensorData && (
-          <View style={styles.detailsContainer}>
-            <View style={styles.detailsSection}>
-              <Text style={styles.detailsHeader}>Accelerometer (m/s²)</Text>
-              <Text style={styles.detailsText}>X: {processedAccel.x.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Y: {processedAccel.y.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Z: {processedAccel.z.toFixed(2)}</Text>
-            </View>
-
-            <View style={styles.detailsSection}>
-              <Text style={styles.detailsHeader}>Gyroscope (rad/s)</Text>
-              <Text style={styles.detailsText}>X: {sensorData.gyrX.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Y: {sensorData.gyrY.toFixed(2)}</Text>
-              <Text style={styles.detailsText}>Z: {sensorData.gyrZ.toFixed(2)}</Text>
-            </View>
-
-            {isRecording && (
-              <View style={styles.detailsSection}>
-                <Text style={styles.detailsHeader}>Recording Stats</Text>
-                <Text style={styles.detailsText}>Measurements: {measurementCount}</Text>
-              </View>
-            )}
-          </View>
-        )}
-      </Pressable>
+      <MainDisplay
+        magnitude={magnitude}
+        processedAccel={processedAccel}
+        sensorData={sensorData}
+        showDetails={showDetails}
+        measurementCount={measurementCount}
+        isRecording={isRecording}
+        orientation={orientation}
+      />
 
       {/* Settings Section */}
       <View style={styles.settingsContainer}>
@@ -251,6 +243,19 @@ const LiveScreen = () => {
               onValueChange={setRemoveGravityEnabled}
               trackColor={{ false: '#374151', true: '#6544C0' }}
               thumbColor={removeGravityEnabled ? '#FFFFFF' : '#9CA3AF'}
+            />
+          </View>
+
+          <View style={styles.settingRow}>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingLabel}>Show Details</Text>
+              <Text style={styles.settingDescription}>Display detailed sensor data</Text>
+            </View>
+            <Switch
+              value={showDetails}
+              onValueChange={setShowDetails}
+              trackColor={{ false: '#374151', true: '#6544C0' }}
+              thumbColor={showDetails ? '#FFFFFF' : '#9CA3AF'}
             />
           </View>
         </View>

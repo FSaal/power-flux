@@ -2,7 +2,7 @@ import { SensorData } from '@/shared/services/ble_context';
 import { cardStyles } from '@/shared/styles/components';
 import { theme } from '@/shared/styles/theme';
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 interface MainDisplayProps {
   magnitude: number;
@@ -11,7 +11,7 @@ interface MainDisplayProps {
   showDetails: boolean;
   measurementCount?: number;
   isRecording?: boolean;
-  onToggleDetails: () => void;
+  orientation?: { x: number; y: number; z: number };
 }
 
 export const MainDisplay: React.FC<MainDisplayProps> = ({
@@ -21,10 +21,13 @@ export const MainDisplay: React.FC<MainDisplayProps> = ({
   showDetails,
   measurementCount,
   isRecording,
-  onToggleDetails,
+  orientation,
 }) => {
+  // Convert radians to degrees for display
+  const toDegrees = (rad: number): number => (rad * 180) / Math.PI;
+
   return (
-    <Pressable style={styles.container} onPress={onToggleDetails}>
+    <View style={styles.container}>
       <Text style={styles.dataLabel}>Acceleration Magnitude</Text>
       <Text style={styles.dataValue}>
         {magnitude.toFixed(2)}
@@ -32,7 +35,7 @@ export const MainDisplay: React.FC<MainDisplayProps> = ({
       </Text>
 
       {showDetails && sensorData && (
-        <View style={[cardStyles.container, cardStyles.elevated, styles.detailsContainer]}>
+        <ScrollView style={[cardStyles.container, cardStyles.elevated, styles.detailsContainer]}>
           <View style={styles.detailsSection}>
             <Text style={styles.detailsHeader}>Accelerometer (m/s²)</Text>
             <Text style={styles.detailsText}>X: {processedAccel.x.toFixed(2)}</Text>
@@ -47,15 +50,24 @@ export const MainDisplay: React.FC<MainDisplayProps> = ({
             <Text style={styles.detailsText}>Z: {sensorData.gyrZ.toFixed(2)}</Text>
           </View>
 
+          {orientation && (
+            <View style={styles.detailsSection}>
+              <Text style={styles.detailsHeader}>Orientation (degrees)</Text>
+              <Text style={styles.detailsText}>Roll: {toDegrees(orientation.x)?.toFixed(1)}°</Text>
+              <Text style={styles.detailsText}>Pitch: {toDegrees(orientation.y)?.toFixed(1)}°</Text>
+              <Text style={styles.detailsText}>Yaw: {toDegrees(orientation.z)?.toFixed(1)}°</Text>
+            </View>
+          )}
+
           {isRecording && measurementCount !== undefined && (
             <View style={styles.detailsSection}>
               <Text style={styles.detailsHeader}>Recording Stats</Text>
               <Text style={styles.detailsText}>Measurements: {measurementCount}</Text>
             </View>
           )}
-        </View>
+        </ScrollView>
       )}
-    </Pressable>
+    </View>
   );
 };
 
@@ -85,11 +97,11 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.lg,
     padding: theme.spacing.md,
     gap: theme.spacing.md,
-    maxHeight: 300,
-    overflow: 'scroll',
+    maxHeight: 200, // Limit height and enable scrolling
   },
   detailsSection: {
     gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.md, // Add some spacing between sections
   },
   detailsHeader: {
     color: theme.colors.textSecondary,
@@ -101,4 +113,3 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
-

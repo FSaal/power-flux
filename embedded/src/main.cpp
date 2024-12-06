@@ -117,7 +117,7 @@ void configureIMU()
   // Configure gyroscope (±500 dps, enable DLPF)
   uint8_t gyroConfig = imu->readRegister8(0x1B);
   gyroConfig &= ~(0x3 << 3); // Clear FS_SEL bits
-  gyroConfig |= (0x1 << 3);  // Set to ±500 dps
+  gyroConfig |= (0x0 << 3);  // Set to ±250 dps
   gyroConfig &= ~(0x3);      // Enable DLPF
   imu->writeRegister8(0x1B, gyroConfig);
 
