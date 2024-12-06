@@ -25,6 +25,11 @@ bool connectionChanged = false;
 bool initialDisplayShown = false;
 DisplayController deviceDisplay;
 
+static constexpr uint32_t TRIPLE_CLICK_WINDOW = 1000; // Window for triple click in ms
+static constexpr uint32_t CLICK_THRESHOLD = 300;      // Max time between clicks
+uint32_t lastClickTimes[3] = {0, 0, 0};               // Store last 3 click timestamps
+uint8_t clickCount = 0;                               // Current click count
+
 struct __attribute__((packed)) SensorPacket
 {
   float x;
@@ -206,6 +211,37 @@ bool initBLE()
   }
 }
 
+void handleButton()
+{
+  uint32_t currentTime = millis();
+
+  // Always wake display on any button press
+  deviceDisplay.wakeDisplay();
+
+  // Shift previous clicks
+  lastClickTimes[0] = lastClickTimes[1];
+  lastClickTimes[1] = lastClickTimes[2];
+  lastClickTimes[2] = currentTime;
+
+  // Check if we have 3 clicks within the time window
+  if (currentTime - lastClickTimes[0] < TRIPLE_CLICK_WINDOW &&
+      (lastClickTimes[2] - lastClickTimes[1]) < CLICK_THRESHOLD &&
+      (lastClickTimes[1] - lastClickTimes[0]) < CLICK_THRESHOLD)
+  {
+    Serial.println("Triple click detected - Resetting BLE");
+
+    if (pServer && deviceConnected)
+    {
+      // Disconnect all clients
+      pServer->disconnect(0);
+      // onDisconnect callback will handle the cleanup
+    }
+
+    // Reset click tracking
+    memset(lastClickTimes, 0, sizeof(lastClickTimes));
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -240,6 +276,14 @@ void loop()
   static constexpr uint32_t CONNECTION_CHECK_INTERVAL = 1000;
   static constexpr uint32_t UPDATE_INTERVAL = 50; // 20Hz sampling
   uint32_t currentTime = millis();
+
+  M5.update();
+
+  // Check for button press
+  if (M5.BtnA.wasPressed())
+  {
+    handleButton();
+  }
 
   deviceDisplay.manageDisplayState();
 

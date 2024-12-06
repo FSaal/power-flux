@@ -27,24 +27,17 @@ public:
     }
 
     void manageDisplayState()
+{
+    if (displayOn && (millis() - lastActivity > DISPLAY_TIMEOUT))
     {
-        M5.update();
-
-        if (M5.BtnA.wasPressed())
-        {
-            wakeDisplay();
-            return;
-        }
-        if (displayOn && (millis() - lastActivity > DISPLAY_TIMEOUT))
-        {
-            M5.Lcd.sleep();
-            displayOn = false;
-        }
-        if (displayOn && (millis() - lastBatteryUpdate > BATTERY_UPDATE_INTERVAL))
-        {
-            updateBatteryInfo();
-        }
+        M5.Lcd.sleep();
+        displayOn = false;
     }
+    if (displayOn && (millis() - lastBatteryUpdate > BATTERY_UPDATE_INTERVAL))
+    {
+        updateBatteryInfo();
+    }
+}
 
     /**
      * @brief Wakes up the display if it is in sleep mode.

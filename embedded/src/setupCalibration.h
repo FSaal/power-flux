@@ -73,7 +73,7 @@ public:
     void startQuickCalibration();
     void abortCalibration() noexcept;
     void processCalibration();
-    CorrectedData correctSensorData(const Vector3D &rawAccel, const Vector3D &rawGyro, float temp);
+    CorrectedData correctSensorData(const Vector3D &rawAccel, const Vector3D &rawGyro);
     [[nodiscard]] bool isCalibrationInProgress() const noexcept { return calibrationInProgress; }
 
 private:
