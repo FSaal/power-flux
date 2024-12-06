@@ -1,7 +1,7 @@
 #pragma once
 #include <M5StickCPlus2.h>
 #include <BLECharacteristic.h>
-#include "displayController.h"
+#include "display/displayController.h"
 #include "utils/logger.h"
 #include "utils/error.h"
 #include <memory>

@@ -4,8 +4,8 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <memory>
-#include "SetupCalibration.h"
-#include "DisplayController.h"
+#include "calibration/SetupCalibration.h"
+#include "display/DisplayController.h"
 #include "utils/logger.h"
 #include "utils/error.h"
 #include "config/config.h"
