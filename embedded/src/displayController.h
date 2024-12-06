@@ -1,61 +1,79 @@
 #pragma once
 #include <M5StickCPlus2.h>
+#include "utils/logger.h"
+#include "config/config.h"
 
 /**
- * @class DisplayController
- * @brief Manages the display activities, including showing status, battery info, and calibration progress.
+ * @brief Controls the M5Stick display, managing power state and content updates
+ *
+ * Handles display sleep/wake cycles, battery information updates, and various
+ * UI states including calibration and connection status.
  */
 class DisplayController
 {
 public:
-    static constexpr uint32_t DISPLAY_TIMEOUT = 10000;         // 10 seconds before display timeout
-    static constexpr uint16_t BATTERY_UPDATE_INTERVAL = 60000; // 60 seconds for battery update
+    // Constants
+    static constexpr char MODULE_NAME[] = "DISPLAY";
 
     DisplayController() : lastActivity(0), displayOn(true), lastBatteryUpdate(0) {}
 
+    /**
+     * @brief Initializes the display with default settings
+     */
     void begin()
     {
-        M5.Lcd.setRotation(3);             // Horizontal screen
-        updateDisplayStatus(false, false); // Startup screen showing BLE status and recording status off
+        Logger::info(MODULE_NAME, "Initializing display");
+        M5.Lcd.setRotation(3);
+        updateDisplayStatus(false, false);
     }
 
+    /**
+     * @brief Updates the display with current device status
+     * @param bleConnected Current BLE connection state
+     * @param isRecording Whether the device is currently recording
+     */
     void updateDisplayStatus(bool bleConnected, bool isRecording)
     {
         wakeDisplay();
-        Serial.printf("[DISPLAY] Updating status: BLE %s, Recording %s\n", bleConnected ? "ON" : "OFF", isRecording ? "ON" : "OFF");
-        drawMainScreen(bleConnected); // TODO: Add recording status
+        Logger::logf(Logger::Level::INFO, MODULE_NAME,
+                     "Updating status: BLE %s, Recording %s",
+                     bleConnected ? "ON" : "OFF",
+                     isRecording ? "ON" : "OFF");
+        drawMainScreen(bleConnected);
     }
 
     void manageDisplayState()
-{
-    if (displayOn && (millis() - lastActivity > DISPLAY_TIMEOUT))
     {
-        M5.Lcd.sleep();
-        displayOn = false;
+        if (displayOn && (millis() - lastActivity > Config::Display::DISPLAY_TIMEOUT))
+        {
+            Logger::debug(MODULE_NAME, "Display timeout - entering sleep");
+            M5.Lcd.sleep();
+            displayOn = false;
+        }
+        if (displayOn && (millis() - lastBatteryUpdate > Config::Display::BATTERY_UPDATE_INTERVAL))
+        {
+            updateBatteryInfo();
+        }
     }
-    if (displayOn && (millis() - lastBatteryUpdate > BATTERY_UPDATE_INTERVAL))
-    {
-        updateBatteryInfo();
-    }
-}
 
-    /**
-     * @brief Wakes up the display if it is in sleep mode.
-     */
     void wakeDisplay()
     {
+        if (!displayOn)
+        {
+            Logger::debug(MODULE_NAME, "Waking display");
+        }
         M5.Lcd.wakeup();
         displayOn = true;
         lastActivity = millis();
     }
 
     /**
-     * @brief Displays the calibration progress on the screen.
-     * @param progress Current calibration progress percentage.
+     * @brief Shows calibration progress on screen
+     * @param progress Current progress percentage (0-100)
      */
     void showCalibrationProgress(int progress)
     {
-        this->wakeDisplay();
+        wakeDisplay();
         M5.Lcd.startWrite();
         M5.Lcd.fillScreen(PURPLE);
         M5.Lcd.setCursor(0, 0);
@@ -70,7 +88,7 @@ public:
 
     void showCalibrationInstruction(const char *instruction)
     {
-        this->wakeDisplay();
+        wakeDisplay();
         M5.Lcd.startWrite();
         M5.Lcd.fillScreen(PURPLE);
         M5.Lcd.setCursor(0, 0);
@@ -84,14 +102,10 @@ public:
     }
 
 private:
-    uint32_t lastActivity;      // Last recorded activity time
-    uint32_t lastBatteryUpdate; // Last recorded battery update time
-    bool displayOn;             // Display on/off status
+    uint32_t lastActivity;
+    uint32_t lastBatteryUpdate;
+    bool displayOn;
 
-    /**
-     * @brief Draws the main screen with the BLE connection status.
-     * @param bleConnected Indicates BLE connection status.
-     */
     void drawMainScreen(bool bleConnected)
     {
         M5.Lcd.startWrite();
@@ -113,15 +127,13 @@ private:
         lastBatteryUpdate = millis();
     }
 
-    /**
-     * @brief Updates the battery information on the display.
-     */
     void updateBatteryInfo()
     {
         if (!displayOn)
             return;
 
         float batteryLevel = M5.Power.getBatteryLevel();
+        Logger::logf(Logger::Level::DEBUG, MODULE_NAME, "Battery level: %.1f%%", batteryLevel);
 
         M5.Lcd.startWrite();
         M5.Lcd.fillRect(5, 55, M5.Lcd.width() - 10, 20, BLACK);

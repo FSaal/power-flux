@@ -1,5 +1,8 @@
+#include "config/config.h"
 #include "SetupCalibration.h"
 #include <cmath>
+
+constexpr char SetupCalibration::MODULE_NAME[];
 
 SetupCalibration::SetupCalibration(BLECharacteristic *calibChar, DisplayController &disp) noexcept
     : deviceDisplay(disp),
@@ -12,13 +15,14 @@ SetupCalibration::SetupCalibration(BLECharacteristic *calibChar, DisplayControll
 {
     calibData.isValid = false;
     calibData.accelScale = 1.0f;
+    Logger::info(MODULE_NAME, "SetupCalibration initialized");
 }
 
 void SetupCalibration::processCalibration()
 {
     if (!calibrationInProgress)
     {
-        Serial.println("[CALIB] Process called but calibration not in progress");
+        Logger::debug(MODULE_NAME, "Process called but calibration not in progress");
         return;
     }
 
@@ -38,70 +42,77 @@ void SetupCalibration::processCalibration()
         break;
     case CalibrationState::QUICK_COMPLETE:
         calibrationInProgress = false;
+        Logger::info(MODULE_NAME, "Calibration completed successfully");
         break;
     case CalibrationState::FAILED:
         calibrationInProgress = false;
+        Logger::error(MODULE_NAME, "Calibration failed");
         break;
     default:
+        Logger::error(MODULE_NAME, "Invalid calibration state");
         break;
     }
 }
 
 void SetupCalibration::transitionTo(CalibrationState newState)
 {
-    Serial.printf("[CALIB] Transitioning from state: %d to state: %d\n", static_cast<int>(currentState), static_cast<int>(newState));
+    Logger::logf(Logger::Level::INFO, MODULE_NAME, "State transition: %d -> %d",
+                 static_cast<int>(currentState), static_cast<int>(newState));
     currentState = newState;
     stateStartTime = millis();
     sampleCount = 0;
     sendStatusToApp();
-    deviceDisplay.showCalibrationProgress(0); // TODO This might be wrong
+    deviceDisplay.showCalibrationProgress(0);
 }
 
-void SetupCalibration::startQuickCalibration()
+Error SetupCalibration::startQuickCalibration()
 {
-    Serial.println("[CALIB] Starting quick calibration");
+    Logger::info(MODULE_NAME, "Starting quick calibration");
+
     if (calibrationInProgress)
     {
-        Serial.println("[CALIB] Calibration already in progress");
-        return;
+        Logger::warn(MODULE_NAME, "Calibration already in progress");
+        return Error(Error::Code::INVALID_STATE, "Calibration already in progress");
     }
 
     try
     {
-        Serial.println("[CALIB] Allocating memory for samples");
-        accelSamples.reset(new Vector3D[QUICK_SAMPLES]);
-        gyroSamples.reset(new Vector3D[QUICK_SAMPLES]);
+        Logger::debug(MODULE_NAME, "Allocating memory for samples");
+        accelSamples.reset(new Vector3D[Config::Calibration::QUICK_SAMPLES]);
+        gyroSamples.reset(new Vector3D[Config::Calibration::QUICK_SAMPLES]);
+
         if (!accelSamples || !gyroSamples)
         {
-            Serial.println("[CALIB] Memory allocation failed");
-            throw std::bad_alloc();
+            Logger::error(MODULE_NAME, "Memory allocation failed");
+            return Error(Error::Code::MEMORY_ERROR, "Failed to allocate sample buffers");
         }
 
         calibrationInProgress = true;
         calibData.isValid = false;
         transitionTo(CalibrationState::QUICK_STATIC_FLAT);
-        Serial.println("[CALIB] Quick calibration initialization complete");
+        return Error(Error::Code::NONE, "Success");
     }
     catch (...)
     {
-        Serial.println("[CALIB] Failed to start calibration");
-        transitionTo(CalibrationState::FAILED);
+        Logger::error(MODULE_NAME, "Failed to start calibration");
+        return Error(Error::Code::CALIBRATION_FAILED, "Unknown error during initialization");
     }
 }
 
 void SetupCalibration::handleQuickStaticFlat()
 {
-    if (sampleCount < QUICK_SAMPLES)
+    if (sampleCount < Config::Calibration::QUICK_SAMPLES)
     {
         Vector3D accel, gyro;
         M5.Imu.getAccelData(&accel.x, &accel.y, &accel.z);
         M5.Imu.getGyroData(&gyro.x, &gyro.y, &gyro.z);
 
         float gyroMag = gyro.magnitude();
-        if (gyroMag > MOVEMENT_TOLERANCE)
+        if (gyroMag > Config::Calibration::MOVEMENT_TOLERANCE)
         {
-            Serial.printf("[CALIB] Movement detected (%.3f > %.3f), restarting\n",
-                          gyroMag, MOVEMENT_TOLERANCE);
+            Logger::logf(Logger::Level::DEBUG, MODULE_NAME,
+                         "Movement detected (%.3f > %.3f), restarting",
+                         gyroMag, Config::Calibration::MOVEMENT_TOLERANCE);
             sampleCount = 0;
             return;
         }
@@ -112,7 +123,7 @@ void SetupCalibration::handleQuickStaticFlat()
 
         if (sampleCount % 10 == 0)
         {
-            uint8_t progress = static_cast<uint8_t>((sampleCount * 50) / QUICK_SAMPLES);
+            uint8_t progress = static_cast<uint8_t>((sampleCount * 50) / Config::Calibration::QUICK_SAMPLES);
             currentProgress = progress;
             updateProgress(progress);
         }
@@ -126,39 +137,34 @@ void SetupCalibration::handleQuickStaticFlat()
 
 void SetupCalibration::handleQuickWaitingRotation()
 {
-    // Display instruction to rotate device
     deviceDisplay.showCalibrationInstruction("Rotate device 90°");
 
     Vector3D accel;
     M5.Imu.getAccelData(&accel.x, &accel.y, &accel.z);
 
-    // Calculate angle between current acceleration vector and vertical (Z-axis)
     float zComponent = accel.z / accel.magnitude();
     float angleFromVertical = acos(zComponent) * 180.0f / M_PI;
 
-    if (angleFromVertical > ROTATION_THRESHOLD)
+    if (angleFromVertical > Config::Calibration::ROTATION_THRESHOLD)
     {
-        Serial.println("[CALIB] Device rotation recognized, starting stabilization");
+        Logger::info(MODULE_NAME, "Device rotation recognized, starting stabilization");
         transitionTo(CalibrationState::QUICK_STABILIZING);
     }
 }
 
 void SetupCalibration::handleQuickStabilizing()
 {
-    // TODO: Hotfix, just wait a bit to let device stabilize
-    delay(2000);
     static uint32_t stableStartTime = 0;
-
     Vector3D gyro;
     M5.Imu.getGyroData(&gyro.x, &gyro.y, &gyro.z);
 
-    if (gyro.magnitude() < STILLNESS_THRESHOLD)
+    if (gyro.magnitude() < Config::Calibration::STILLNESS_THRESHOLD)
     {
         if (stableStartTime == 0)
         {
             stableStartTime = millis();
         }
-        else if (millis() - stableStartTime > STABLE_DURATION)
+        else if (millis() - stableStartTime > Config::Calibration::STABLE_DURATION)
         {
             stableStartTime = 0;
             transitionTo(CalibrationState::QUICK_STATIC_SIDE);
@@ -166,24 +172,25 @@ void SetupCalibration::handleQuickStabilizing()
     }
     else
     {
-        Serial.printf("[CALIB] Movement detected: %.3f\n", gyro.magnitude());
+        Logger::logf(Logger::Level::DEBUG, MODULE_NAME, "Movement detected: %.3f", gyro.magnitude());
         stableStartTime = 0;
     }
 }
 
 void SetupCalibration::handleQuickStaticSide()
 {
-    if (sampleCount < QUICK_SAMPLES)
+    if (sampleCount < Config::Calibration::QUICK_SAMPLES)
     {
         Vector3D accel, gyro;
         M5.Imu.getAccelData(&accel.x, &accel.y, &accel.z);
         M5.Imu.getGyroData(&gyro.x, &gyro.y, &gyro.z);
 
         float gyroMag = gyro.magnitude();
-        if (gyroMag > MOVEMENT_TOLERANCE)
+        if (gyroMag > Config::Calibration::MOVEMENT_TOLERANCE)
         {
-            Serial.printf("[CALIB] Movement detected (%.3f > %.3f), restarting\n",
-                          gyroMag, MOVEMENT_TOLERANCE);
+            Logger::logf(Logger::Level::DEBUG, MODULE_NAME,
+                         "Movement detected (%.3f > %.3f), restarting",
+                         gyroMag, Config::Calibration::MOVEMENT_TOLERANCE);
             sampleCount = 0;
             return;
         }
@@ -192,10 +199,9 @@ void SetupCalibration::handleQuickStaticSide()
         gyroSamples[sampleCount] = gyro;
         sampleCount++;
 
-        // Update progress (50-100%)
         if (sampleCount % 10 == 0)
         {
-            uint8_t progress = static_cast<uint8_t>(50 + (sampleCount * 50) / QUICK_SAMPLES);
+            uint8_t progress = static_cast<uint8_t>(50 + (sampleCount * 50) / Config::Calibration::QUICK_SAMPLES);
             currentProgress = progress;
             updateProgress(progress);
         }
@@ -219,45 +225,49 @@ Vector3D SetupCalibration::calculateMean(const Vector3D samples[], uint32_t coun
 
 void SetupCalibration::calculateFlatPosition()
 {
-    flatAccelMean = calculateMean(accelSamples.get(), QUICK_SAMPLES);
-    Vector3D gyroMean = calculateMean(gyroSamples.get(), QUICK_SAMPLES);
+    flatAccelMean = calculateMean(accelSamples.get(), Config::Calibration::QUICK_SAMPLES);
+    Vector3D gyroMean = calculateMean(gyroSamples.get(), Config::Calibration::QUICK_SAMPLES);
 
-    // Store gyro bias from flat position
     calibData.gyroBias = gyroMean;
 
-    Serial.printf("[CALIB] Flat position mean: X=%.3f, Y=%.3f, Z=%.3f\n",
-                  flatAccelMean.x, flatAccelMean.y, flatAccelMean.z);
-    Serial.printf("[CALIB] Gyro bias: X=%.3f, Y=%.3f, Z=%.3f\n",
-                  calibData.gyroBias.x, calibData.gyroBias.y, calibData.gyroBias.z);
+    Logger::logf(Logger::Level::INFO, MODULE_NAME,
+                 "Flat position mean: X=%.3f, Y=%.3f, Z=%.3f",
+                 flatAccelMean.x, flatAccelMean.y, flatAccelMean.z);
+    Logger::logf(Logger::Level::INFO, MODULE_NAME,
+                 "Gyro bias: X=%.3f, Y=%.3f, Z=%.3f",
+                 calibData.gyroBias.x, calibData.gyroBias.y, calibData.gyroBias.z);
 }
 
 void SetupCalibration::calculateSidePosition()
 {
-    sideAccelMean = calculateMean(accelSamples.get(), QUICK_SAMPLES);
+    sideAccelMean = calculateMean(accelSamples.get(), Config::Calibration::QUICK_SAMPLES);
 
-    // Calculate scale factor using both positions
     float xMagnitude = std::abs(sideAccelMean.x);
     float zMagnitude = std::abs(flatAccelMean.z);
     float averageMagnitude = (zMagnitude + xMagnitude) / 2.0f;
-    calibData.accelScale = GRAVITY_MAGNITUDE / averageMagnitude;
-    Serial.printf("[CALIB] xMag: %.3f, zMag: %.3f, avgMag: %.3f\n", xMagnitude, zMagnitude, averageMagnitude);
+    calibData.accelScale = Config::Calibration::GRAVITY_MAGNITUDE / averageMagnitude;
 
-    if (calibData.accelScale < MIN_SCALE_FACTOR || calibData.accelScale > MAX_SCALE_FACTOR)
+    Logger::logf(Logger::Level::DEBUG, MODULE_NAME,
+                 "xMag: %.3f, zMag: %.3f, avgMag: %.3f",
+                 xMagnitude, zMagnitude, averageMagnitude);
+
+    if (calibData.accelScale < Config::Calibration::MIN_SCALE_FACTOR || calibData.accelScale > Config::Calibration::MAX_SCALE_FACTOR)
     {
-        Serial.printf("[CALIB] Invalid scale factor: %.3f\n", calibData.accelScale);
+        Logger::logf(Logger::Level::ERROR, MODULE_NAME,
+                     "Invalid scale factor: %.3f", calibData.accelScale);
         transitionTo(CalibrationState::FAILED);
         return;
     }
 
-    // Calculate bias using scaled values from both positions
     calibData.accelBias = Vector3D(
         flatAccelMean.x * calibData.accelScale,
         (flatAccelMean.y + sideAccelMean.y) * calibData.accelScale / 2.0f,
         sideAccelMean.z * calibData.accelScale);
 
-    Serial.printf("[CALIB] Scale: %.3f\n", calibData.accelScale);
-    Serial.printf("[CALIB] Bias: X=%.3f, Y=%.3f, Z=%.3f\n",
-                  calibData.accelBias.x, calibData.accelBias.y, calibData.accelBias.z);
+    Logger::logf(Logger::Level::INFO, MODULE_NAME, "Scale: %.3f", calibData.accelScale);
+    Logger::logf(Logger::Level::INFO, MODULE_NAME,
+                 "Bias: X=%.3f, Y=%.3f, Z=%.3f",
+                 calibData.accelBias.x, calibData.accelBias.y, calibData.accelBias.z);
 
     calibData.isValid = true;
     deviceDisplay.updateDisplayStatus(deviceConnected, false);
@@ -270,33 +280,38 @@ void SetupCalibration::updateProgress(uint8_t progress)
 
     if (!pCalibCharacteristic || !deviceConnected)
     {
-        Serial.println("[CALIB] Cannot send progress - no characteristic or not connected");
+        Logger::warn(MODULE_NAME, "Cannot send progress - no characteristic or not connected");
         return;
     }
+
     CalibrationProgress statusUpdate = {
         .state = static_cast<CalibrationState>(static_cast<uint8_t>(currentState)),
         .progress = progress};
 
-    // Send the update immediately
-    pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&statusUpdate), sizeof(CalibrationProgress));
+    pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&statusUpdate),
+                                   sizeof(CalibrationProgress));
     pCalibCharacteristic->notify();
 
-    // Debug output
-    Serial.printf("[CALIB] Sent progress update: State=%d, Progress=%d%%\n",
-                  static_cast<int>(statusUpdate.state),
-                  statusUpdate.progress);
+    Logger::logf(Logger::Level::DEBUG, MODULE_NAME,
+                 "Progress update: State=%d, Progress=%d%%",
+                 static_cast<int>(statusUpdate.state),
+                 statusUpdate.progress);
 }
 
 void SetupCalibration::sendStatusToApp()
 {
     if (!pCalibCharacteristic)
+    {
+        Logger::warn(MODULE_NAME, "Cannot send status - no characteristic");
         return;
+    }
 
     CalibrationProgress progress = {
         .state = currentState,
         .progress = currentProgress};
 
-    pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&progress), sizeof(CalibrationProgress));
+    pCalibCharacteristic->setValue(reinterpret_cast<uint8_t *>(&progress),
+                                   sizeof(CalibrationProgress));
     pCalibCharacteristic->notify();
 }
 
@@ -305,6 +320,7 @@ void SetupCalibration::abortCalibration() noexcept
     if (!calibrationInProgress)
         return;
 
+    Logger::info(MODULE_NAME, "Aborting calibration");
     accelSamples.reset();
     gyroSamples.reset();
     calibrationInProgress = false;
@@ -324,18 +340,16 @@ CorrectedData SetupCalibration::correctSensorData(const Vector3D &rawAccel, cons
         return result;
     }
 
-    // Apply scale then bias correction to accelerometer
     result.accel = Vector3D(
         rawAccel.x * calibData.accelScale - calibData.accelBias.x,
         rawAccel.y * calibData.accelScale - calibData.accelBias.y,
         rawAccel.z * calibData.accelScale - calibData.accelBias.z);
 
-    // Apply bias correction and deadband to gyroscope
     Vector3D correctedGyro = rawGyro - calibData.gyroBias;
     result.gyro = Vector3D(
-        std::abs(correctedGyro.x) < GYRO_DEADBAND ? 0.0f : correctedGyro.x,
-        std::abs(correctedGyro.y) < GYRO_DEADBAND ? 0.0f : correctedGyro.y,
-        std::abs(correctedGyro.z) < GYRO_DEADBAND ? 0.0f : correctedGyro.z);
+        std::abs(correctedGyro.x) < Config::Calibration::GYRO_DEADBAND ? 0.0f : correctedGyro.x,
+        std::abs(correctedGyro.y) < Config::Calibration::GYRO_DEADBAND ? 0.0f : correctedGyro.y,
+        std::abs(correctedGyro.z) < Config::Calibration::GYRO_DEADBAND ? 0.0f : correctedGyro.z);
 
     result.isValid = true;
     return result;
